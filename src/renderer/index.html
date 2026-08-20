@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'" />
+    <title>Tunnel Keeper</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Tunnel Keeper</h1>
+      <div id="identity" class="identity"></div>
+    </header>
+
+    <main>
+      <!-- Step 1: credentials -->
+      <section id="credsCard" class="card">
+        <div class="card-head">
+          <h2>Credentials</h2>
+          <span id="credsBadge" class="badge badge-idle">Not loaded</span>
+        </div>
+
+        <div id="credsForm">
+          <!-- Profile route first: one click when ~/.aws already has what you need. -->
+          <div id="profileBlock" class="subsection">
+            <div class="subsection-head">
+              <span>Use a profile from <code>~/.aws</code></span>
+              <button id="profileRefresh" class="small ghost" title="Re-read ~/.aws">Refresh</button>
+            </div>
+            <div class="row tight">
+              <select id="profile"><option value="">Loading…</option></select>
+              <button id="profileBtn" class="primary" disabled>Use profile</button>
+            </div>
+            <span id="profileNote" class="hint"></span>
+          </div>
+
+          <div class="or"><span>or paste credentials</span></div>
+
+          <p class="hint">
+            Paste temporary STS credentials — a shell <code>export</code> block, an ini block, or
+            <code>aws sts assume-role</code> JSON. Secrets stay in memory, are redacted once consumed, and are
+            never written to disk.
+            <br />
+            For a live expiry countdown, paste output that states it — no AWS API can reveal a token's
+            expiry: <code>aws configure export-credentials --format env</code>
+          </p>
+          <textarea id="credsInput" spellcheck="false" rows="7"
+            placeholder="export AWS_ACCESS_KEY_ID=ASIA...&#10;export AWS_SECRET_ACCESS_KEY=...&#10;export AWS_SESSION_TOKEN=...&#10;export AWS_DEFAULT_REGION=eu-west-1"></textarea>
+          <div class="row">
+            <button id="loadBtn" class="primary">Load &amp; verify</button>
+          </div>
+          <div id="credsStatus" class="status hidden"></div>
+        </div>
+
+        <div id="credsLoaded" class="hidden">
+          <dl class="facts">
+            <div><dt id="fKeyLabel">Access key</dt><dd id="fKey" class="mono"></dd></div>
+            <div><dt>Account</dt><dd id="fAccount" class="mono"></dd></div>
+            <div><dt>User</dt><dd id="fUser" class="mono"></dd></div>
+            <div><dt>Region</dt><dd id="fRegion" class="mono"></dd></div>
+            <div><dt>Expires</dt><dd id="fExpiry" class="mono"></dd></div>
+            <div><dt>ARN</dt><dd id="fArn" class="mono wrap"></dd></div>
+          </dl>
+          <div class="row">
+            <button id="clearBtn">Clear credentials</button>
+            <span class="hint">Clearing also stops every active tunnel.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Step 2: new tunnel -->
+      <section class="card">
+        <div class="card-head">
+          <h2>New tunnel</h2>
+          <div class="tunnel-actions">
+            <select id="region" class="region" disabled title="Region"></select>
+            <button id="refreshBtn">Refresh instances</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="instance">Instance <span class="hint">SSM-managed, online</span></label>
+          <select id="instance" disabled>
+            <option value="">Load credentials first</option>
+          </select>
+          <span id="instanceNote" class="hint"></span>
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <label for="preset">Service</label>
+            <select id="preset">
+              <option value="1433">MSSQL — 1433</option>
+              <option value="3389">RDP — 3389</option>
+              <option value="22">SSH — 22</option>
+              <option value="custom">Custom…</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="remotePort">Remote port</label>
+            <input id="remotePort" type="number" min="1" max="65535" value="1433" />
+          </div>
+          <div class="field">
+            <label for="localPort">Local port <span class="hint">blank = auto</span></label>
+            <input id="localPort" type="number" min="1" max="65535" placeholder="auto" />
+            <span id="localPortNote" class="hint warn-text"></span>
+          </div>
+        </div>
+
+        <div class="row">
+          <button id="startBtn" class="primary" disabled>Start tunnel</button>
+        </div>
+        <div id="startStatus" class="status hidden"></div>
+        <div id="startConfirm"></div>
+      </section>
+
+      <!-- Step 3: active tunnels -->
+      <section class="card">
+        <div class="card-head">
+          <h2>Tunnels</h2>
+          <span id="tunnelCount" class="hint"></span>
+        </div>
+        <div id="tunnels" class="tunnels">
+          <p class="empty">No tunnels yet.</p>
+        </div>
+      </section>
+    </main>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
