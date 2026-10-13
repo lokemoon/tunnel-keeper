@@ -1,10 +1,10 @@
 {
   "name": "tunnel-keeper",
   "productName": "Tunnel Keeper",
-  "version": "1.0.0",
+  "version": "0.0.0",
   "description": "Simple desktop utility for AWS SSM port-forwarding tunnels",
   "author": "lokemoon",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
