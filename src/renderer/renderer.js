@@ -310,8 +310,92 @@ function renderCreds(c) {
     : '';
   $('fArn').textContent = c.arn || '—';
 
-  $('identity').textContent = `${c.username || '—'} @ ${c.account || '—'} · ${c.region}`;
+  renderAssume(c);
+
+  // While a role is held it is the identity every tunnel runs as, so it is what the
+  // header should name — the base user is no longer who AWS sees.
+  $('identity').textContent = c.assumed
+    ? `${c.assumed.roleName} @ ${c.account || '—'} · ${c.region}`
+    : `${c.username || '—'} @ ${c.account || '—'} · ${c.region}`;
   $('startBtn').disabled = c.expired || !$('instance').value;
+}
+
+// The assume-role row. Deliberately inert about eligibility: the field validates the
+// ARN's shape only, because no AWS call can say in advance which roles you may assume.
+function renderAssume(c) {
+  const holding = !!c.assumed;
+  $('revertBtn').classList.toggle('hidden', !holding);
+  $('assumeBtn').textContent = holding ? 'Switch role' : 'Assume';
+
+  const note = $('assumeNote');
+  if (holding) {
+    note.textContent = `Acting as ${c.assumed.roleName} (session ${c.assumed.sessionName}). ` +
+      'Renewed automatically before it expires.';
+    note.className = 'hint ok-text';
+  } else {
+    note.textContent = 'Optional. The role must trust this identity — that is only confirmed by assuming it.';
+    note.className = 'hint';
+  }
+
+  if (!roleFieldTouched && holding) $('roleArn').value = c.assumed.roleArn;
+}
+
+// Set once the user edits the field, so a 1s broadcast repaint cannot overwrite what
+// they are halfway through typing.
+let roleFieldTouched = false;
+
+async function loadRecentRoles() {
+  const res = await api.recentRoles();
+  if (!res.ok) return;
+  const list = $('roleRecent');
+  list.innerHTML = '';
+  for (const arn of res.data.roles || []) {
+    const opt = document.createElement('option');
+    opt.value = arn;
+    list.appendChild(opt);
+  }
+}
+
+async function doAssume() {
+  const btn = $('assumeBtn');
+  const arn = $('roleArn').value.trim();
+  if (!arn) {
+    status('assumeStatus', 'err', 'Enter the ARN of the role to assume.');
+    return;
+  }
+  btn.disabled = true;
+  status('assumeStatus', 'busy', 'Assuming role…');
+  const res = await api.assumeRole({
+    roleArn: arn,
+    mfaSerial: $('mfaSerial').value.trim() || undefined,
+    tokenCode: $('mfaCode').value.trim() || undefined,
+  });
+  btn.disabled = false;
+  if (!res.ok) {
+    status('assumeStatus', 'err', res.error);
+    // Surface the MFA inputs exactly when AWS says they are needed, rather than
+    // showing two more fields to everyone who will never use them.
+    if (/MFA/i.test(res.error)) $('mfaRow').classList.remove('hidden');
+    return;
+  }
+  $('mfaCode').value = '';
+  roleFieldTouched = false;
+  status('assumeStatus', 'ok', `Now acting as ${res.data.assumed.roleName}.`);
+  loadRecentRoles();
+}
+
+async function doRevert() {
+  const btn = $('revertBtn');
+  btn.disabled = true;
+  status('assumeStatus', 'busy', 'Returning to base credentials…');
+  const res = await api.revertRole();
+  btn.disabled = false;
+  if (!res.ok) {
+    status('assumeStatus', 'err', res.error);
+    return;
+  }
+  roleFieldTouched = false;
+  status('assumeStatus', 'ok', 'Back to your base credentials.');
 }
 
 // ---------- instances ----------
@@ -811,6 +895,16 @@ api.onState((state) => {
   renderTunnels(state.tunnels);
 });
 
+$('assumeBtn').addEventListener('click', doAssume);
+$('revertBtn').addEventListener('click', doRevert);
+$('roleArn').addEventListener('input', () => {
+  roleFieldTouched = true;
+  status('assumeStatus', null);
+});
+$('roleArn').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') doAssume();
+});
+
 loadProfiles();
 
 api.getState().then((res) => {
@@ -819,5 +913,6 @@ api.getState().then((res) => {
     offlineReasonText = res.data.creds.offlineReason || null;
     renderCreds(res.data.creds);
     renderTunnels(res.data.tunnels);
+    if (res.data.creds.loaded) loadRecentRoles();
   }
 });

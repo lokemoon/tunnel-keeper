@@ -2,6 +2,7 @@
 
 const creds = require('./creds');
 const aws = require('./aws');
+const assume = require('./assume');
 const tunnels = require('./tunnels');
 const ports = require('./ports');
 const procs = require('./procs');
@@ -36,8 +37,29 @@ function init({ onChange }) {
 }
 
 async function tick(reason = 'interval') {
+  await renewAssumedRole();
   await checkCredentials(reason);
   await checkTunnels(reason);
+}
+
+// The one thing this module *fixes* rather than merely reports. An assumed role is
+// short-lived by nature, and when it lapses every tunnel running on it dies — the
+// expiry-then-reconnect-storm this app already has scars from. Refreshing ahead of
+// time is possible only because creds.js keeps the base credentials that produced it.
+//
+// Runs before the credential check so a role refreshed here is not first reported
+// expired. A role that required MFA is skipped, since no unattended call can supply a
+// fresh code.
+async function renewAssumedRole() {
+  if (!assume.dueForRenewal()) return;
+  const role = assume.current();
+  const failure = await assume.renew();
+  if (failure) {
+    // Nothing is torn down: the credentials are still valid until they actually lapse,
+    // and the existing expiry path reports it honestly if they do.
+    console.error(`[health] could not refresh ${role && role.roleArn}: ${failure}`);
+  }
+  notify();
 }
 
 // A cheap, authoritative call: if AWS accepts it the session is alive, and if it

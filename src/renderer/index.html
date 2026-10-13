@@ -61,6 +61,24 @@
             <div><dt>Expires</dt><dd id="fExpiry" class="mono"></dd></div>
             <div><dt>ARN</dt><dd id="fArn" class="mono wrap"></dd></div>
           </dl>
+          <div id="assumeBlock" class="subsection">
+            <div class="row">
+              <label for="roleArn">Assume role</label>
+              <input id="roleArn" list="roleRecent" spellcheck="false"
+                     placeholder="arn:aws:iam::123456789012:role/RoleName" />
+              <datalist id="roleRecent"></datalist>
+              <button id="assumeBtn" class="primary">Assume</button>
+              <button id="revertBtn" class="hidden">Back to base</button>
+            </div>
+            <div id="mfaRow" class="row hidden">
+              <label for="mfaSerial">MFA</label>
+              <input id="mfaSerial" spellcheck="false" placeholder="arn:aws:iam::…:mfa/device" />
+              <input id="mfaCode" spellcheck="false" inputmode="numeric" maxlength="6"
+                     class="mfa-code" placeholder="123456" />
+            </div>
+            <span id="assumeNote" class="hint"></span>
+            <div id="assumeStatus" class="status hidden"></div>
+          </div>
           <div class="row">
             <button id="clearBtn">Clear credentials</button>
             <span class="hint">Clearing also stops every active tunnel.</span>

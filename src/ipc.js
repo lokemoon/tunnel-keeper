@@ -2,6 +2,7 @@
 
 const { ipcMain } = require('electron');
 const creds = require('./creds');
+const assume = require('./assume');
 const aws = require('./aws');
 const tunnels = require('./tunnels');
 const settings = require('./settings');
@@ -24,6 +25,7 @@ function register(broadcast) {
   // redacted summary ever goes back the other way.
   handle('creds:load', async (text) => {
     const parsed = creds.parse(text);
+    assume.forget(); // a role held against the previous credentials means nothing now
     creds.set(parsed);
     // A region in the paste wins; otherwise reuse the last one the user chose, so
     // nobody has to re-pick their region on every launch.
@@ -66,6 +68,7 @@ function register(broadcast) {
 
     // Precedence for the region: what the profile itself says, then the one
     // remembered from last session.
+    assume.forget();
     creds.setProfile({ name, region: profile.region || settings.get('region') || null });
 
     try {
@@ -87,9 +90,31 @@ function register(broadcast) {
 
   handle('creds:clear', () => {
     tunnels.stopAll();
+    assume.forget();
     creds.clear();
     broadcast();
     return creds.summary();
+  });
+
+  // Assume a role with the credentials already loaded. The ARN is format-checked
+  // first, but eligibility is only ever learned from the call itself failing.
+  handle('creds:assume', async (opts) => {
+    const summary = await assume.assume(opts || {});
+    broadcast();
+    return summary;
+  });
+
+  handle('creds:revert', async () => {
+    const summary = await assume.revert();
+    broadcast();
+    return summary;
+  });
+
+  // Role ARNs previously assumed from the account currently loaded. Not secrets.
+  handle('creds:roles', () => {
+    const s = creds.summary();
+    const base = creds.isAssumed() ? (assume.current() || {}).baseAccount : s.account;
+    return { account: base || null, roles: base ? assume.recentFor(base) : [] };
   });
 
   handle('creds:region', (r) => {

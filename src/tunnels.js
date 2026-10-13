@@ -649,7 +649,12 @@ function suspendForExpiry() {
 // different account, role or region does not, and reconnecting there would put a
 // different destination behind an unchanged local port — so those are marked and
 // left alone for the user to decide about. Nothing is torn down here.
-async function reviewCredentials() {
+//
+// `context.deliberate` says the user caused this on purpose — 'assume' or 'revert' —
+// which does not change what happens to the tunnels, only how it is explained. A
+// prompt that reads as though something unexpected happened is wrong when the user
+// just asked for it.
+async function reviewCredentials(context = {}) {
   const now = creds.principal();
   const stale = [];
   const resumable = [];
@@ -692,7 +697,9 @@ async function reviewCredentials() {
   }
 
   notify();
-  if (stale.length) emit('credentials-changed', { stale, resumed, principal: now });
+  if (stale.length) {
+    emit('credentials-changed', { stale, resumed, principal: now, ...context });
+  }
   return { stale: stale.length, resumed: resumed.length };
 }
 

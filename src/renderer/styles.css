@@ -290,3 +290,6 @@ details.log pre {
   overflow: auto;
   white-space: pre-wrap;
 }
+
+.ok-text { color: var(--ok); }
+.mfa-code { max-width: 7ch; text-align: center; letter-spacing: 0.15em; }

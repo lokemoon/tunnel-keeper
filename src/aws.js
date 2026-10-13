@@ -60,6 +60,21 @@ function explain(raw, err) {
       ? `Profile "${profile}" is no longer in ~/.aws/config. Pick another profile.`
       : 'That AWS profile could not be found in ~/.aws/config.';
   }
+  // Assume-role failures come first: they are the only way to learn whether you are
+  // eligible for a role, so they must say that rather than read as a generic denial.
+  if (/not authorized to perform: sts:AssumeRole/i.test(s)) {
+    const role = (/on resource:?\s*(\S+)/i.exec(s) || [])[1];
+    return (
+      `These credentials are not allowed to assume ${role || 'that role'}. ` +
+      "Check the role's trust policy lists this identity, or pick a different role."
+    );
+  }
+  if (/MultiFactorAuthentication|MFA|serial-number/i.test(s) && /required|invalid|failed/i.test(s)) {
+    return 'That role requires MFA. Enter the current code from your authenticator and try again.';
+  }
+  if (/DurationSeconds exceeds the MaxSessionDuration/i.test(s)) {
+    return "Requested a longer session than the role allows. Lower it, or raise the role's maximum session duration.";
+  }
   if (/AccessDenied|not authorized|UnauthorizedOperation/i.test(s)) {
     return `Your role is not permitted to do this: ${s.split('\n').pop()}`;
   }
@@ -94,10 +109,13 @@ function onCredentialsExpired(fn) {
   onExpired = fn;
 }
 
-function cli(args, { timeout = 30000 } = {}) {
+// `env` overrides which credentials the call is made with. It exists for exactly one
+// case — sts:assume-role, which cannot run as the role it is acquiring — so callers
+// pass creds.baseEnv(). Everything else uses whatever is currently in effect.
+function cli(args, { timeout = 30000, env = null } = {}) {
   return new Promise((resolve, reject) => {
     const bin = binaries.awsOrThrow();
-    execFile(bin, args, { env: creds.env(), timeout, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(bin, args, { env: env || creds.env(), timeout, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         const raw = (stderr || err.message || '').trim();
         const kind = classify(raw, err);
@@ -134,6 +152,28 @@ async function credentialExpiration() {
     // Static-key profiles have no expiry, and older CLIs lack the command.
     return null;
   }
+}
+
+// Exchanges the base credentials for a role's. Runs with creds.baseEnv() because an
+// assumed set cannot assume on its own behalf, and because re-assuming on expiry has
+// to work from credentials that have not expired with it.
+//
+// Eligibility is not checkable in advance — AWS has no API listing assumable roles —
+// so an AccessDenied here IS the eligibility answer, and explain() maps it to say so.
+async function assumeRole({ roleArn, sessionName, durationSeconds, mfaSerial, tokenCode }) {
+  const args = [
+    'sts', 'assume-role',
+    '--role-arn', roleArn,
+    '--role-session-name', sessionName,
+  ];
+  if (durationSeconds) args.push('--duration-seconds', String(durationSeconds));
+  // Only sent when the role's trust policy demands it; an unnecessary serial is itself
+  // an error, so these travel together or not at all.
+  if (mfaSerial && tokenCode) args.push('--serial-number', mfaSerial, '--token-code', tokenCode);
+
+  const res = await cliJson(args, { env: creds.baseEnv(), timeout: 20000 });
+  if (!res || !res.Credentials) throw new Error('assume-role returned no credentials.');
+  return res.Credentials;
 }
 
 async function getCallerIdentity() {
@@ -183,4 +223,5 @@ async function listInstances() {
 
 module.exports = {
   cli, cliJson, getCallerIdentity, credentialExpiration, listInstances, onCredentialsExpired,
+  assumeRole,
 };

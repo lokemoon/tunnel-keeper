@@ -5,6 +5,11 @@
 
 let creds = null; // { accessKeyId, secretAccessKey, sessionToken, expiration, region }
 let identity = null; // { account, arn, userId, username }
+// Credentials derived from `creds` by sts:assume-role. When set, these are what every
+// subprocess gets — but `creds` is deliberately kept, because re-assuming when these
+// expire is only possible from the base credentials. Both are memory-only: the role
+// ARN is remembered on disk, the keys never are.
+let assumed = null; // { roleArn, roleName, sessionName, accessKeyId, secretAccessKey, sessionToken, expiration }
 let defaultRegion = null; // remembered from the previous session
 
 const KEYS = {
@@ -184,12 +189,61 @@ function setExpiration(iso) {
 // it so the UI and tray can stop pretending the session is still good.
 function markExpired() {
   if (!creds) return;
-  creds.expiration = new Date(Date.now() - 1000).toISOString();
-  creds.expiryObserved = true;
+  // AWS rejected the credentials the call actually used, which is the assumed set when
+  // there is one. Expiring the base instead would claim the wrong thing and would hide
+  // that re-assuming is all that is needed.
+  const target = assumed || creds;
+  target.expiration = new Date(Date.now() - 1000).toISOString();
+  // Recorded on the set AWS actually rejected, so reverting to the base does not
+  // inherit a rejection that was never made about it.
+  target.expiryObserved = true;
 }
 
 function setIdentity(id) {
   identity = id;
+}
+
+// Adopts the output of sts:assume-role. `credentials` is the Credentials object the
+// CLI returns verbatim. The keys stay in memory exactly like a pasted set; only the
+// role ARN is ever written to disk, by settings.js.
+//
+// Unlike a paste, these carry an authoritative Expiration — which is what makes a
+// real countdown and an unattended refresh possible in paste mode at all.
+function setAssumed({ roleArn, roleName, sessionName: session, credentials }) {
+  if (!creds) throw new Error('Load credentials first.');
+  if (!credentials || !credentials.AccessKeyId || !credentials.SecretAccessKey) {
+    throw new Error('assume-role returned no usable credentials.');
+  }
+  assumed = {
+    roleArn,
+    roleName,
+    sessionName: session,
+    accessKeyId: credentials.AccessKeyId,
+    secretAccessKey: credentials.SecretAccessKey,
+    sessionToken: credentials.SessionToken,
+    expiration: credentials.Expiration ? new Date(credentials.Expiration).toISOString() : null,
+    assumedAt: Date.now(),
+  };
+  // The identity is now the role's, and is unknown until get-caller-identity says so.
+  // Leaving the base identity here would make principal() claim the wrong one.
+  identity = null;
+}
+
+// Back to the base credentials. Returns true if anything was actually dropped.
+function clearAssumed() {
+  if (!assumed) return false;
+  for (const k of Object.keys(assumed)) assumed[k] = '';
+  assumed = null;
+  identity = null;
+  return true;
+}
+
+function isAssumed() {
+  return !!assumed;
+}
+
+function assumedRole() {
+  return assumed ? { roleArn: assumed.roleArn, roleName: assumed.roleName } : null;
 }
 
 // Who these credentials are, reduced to the parts that must still match for a tunnel
@@ -267,10 +321,23 @@ function clear() {
   creds = null;
   identity = null;
   unreachable = null;
+  clearAssumed();
 }
 
 function has() {
   return !!creds;
+}
+
+// The environment for calls that must run as the *base* identity — currently only
+// sts:assume-role itself, which by definition cannot run as the role it is acquiring.
+function baseEnv() {
+  const held = assumed;
+  assumed = null;
+  try {
+    return env();
+  } finally {
+    assumed = held;
+  }
 }
 
 // Precedence: the paste, then the region remembered from last session, then the
@@ -304,7 +371,13 @@ function env() {
   delete e.AWS_ACCESS_KEY_ID;
   delete e.AWS_SECRET_ACCESS_KEY;
 
-  if (creds.mode === 'profile') {
+  if (assumed) {
+    // Explicit keys only — no AWS_PROFILE, or botocore would resolve the base profile
+    // again and the assume would have been pointless.
+    e.AWS_ACCESS_KEY_ID = assumed.accessKeyId;
+    e.AWS_SECRET_ACCESS_KEY = assumed.secretAccessKey;
+    e.AWS_SESSION_TOKEN = assumed.sessionToken;
+  } else if (creds.mode === 'profile') {
     e.AWS_PROFILE = creds.profile;
   } else {
     e.AWS_ACCESS_KEY_ID = creds.accessKeyId;
@@ -325,9 +398,13 @@ function tail(s, n = 4) {
   return String(s).slice(-n);
 }
 
+// Whichever credentials are actually in use. An assumed role expires well before the
+// base session normally does, and it is the one every call is made with, so its clock
+// is the honest one to show and to act on.
 function expiresInSeconds() {
-  if (!creds || !creds.expiration) return null;
-  return Math.round((new Date(creds.expiration).getTime() - Date.now()) / 1000);
+  const exp = (assumed && assumed.expiration) || (creds && creds.expiration);
+  if (!exp) return null;
+  return Math.round((new Date(exp).getTime() - Date.now()) / 1000);
 }
 
 // The only credential-shaped thing the renderer is allowed to see.
@@ -353,7 +430,14 @@ function summary() {
     // 'supplied' came from the paste or was reported by the CLI for a profile,
     // 'observed' means AWS rejected it as expired, 'unknown' means it genuinely
     // cannot be determined.
-    expirySource: creds.expiryObserved ? 'observed' : creds.expiration ? 'supplied' : 'unknown',
+    // An assumed role is the one case where paste mode gets a trustworthy clock:
+    // sts:assume-role states the Expiration, so the countdown is real rather than
+    // absent. Observed still wins — AWS rejecting the credentials outranks any claim.
+    expirySource: (assumed || creds).expiryObserved
+      ? 'observed'
+      : (assumed || creds).expiration
+        ? 'supplied'
+        : 'unknown',
     loadedAt: creds.loadedAt || null,
     verifiedAt: creds.verifiedAt || null,
     verifiedAgoSeconds: verifiedAgo(),
@@ -364,6 +448,15 @@ function summary() {
     account: identity && identity.account,
     arn: identity && identity.arn,
     username: identity && identity.username,
+    // Non-secret: an ARN and a session name. The derived keys are never exposed.
+    assumed: assumed
+      ? {
+          roleArn: assumed.roleArn,
+          roleName: assumed.roleName,
+          sessionName: assumed.sessionName,
+          expiration: assumed.expiration,
+        }
+      : null,
   };
 }
 
@@ -371,5 +464,6 @@ module.exports = {
   parse, set, setProfile, isProfile, isOnline, offlineReason, markUnreachable, markReachable,
   setExpiration, setIdentity, markVerified, setRegion,
   principal, samePrincipal, describePrincipal,
+  setAssumed, clearAssumed, isAssumed, assumedRole, baseEnv,
   setDefaultRegion, markExpired, clear, has, env, region, summary, expiresInSeconds,
 };

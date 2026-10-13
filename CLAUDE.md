@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```sh
 npm start          # run in development
+npm run dist       # package for the current platform only
 npm run dist:mac   # macOS universal .dmg (must run on a Mac)
 npm run dist:win   # Windows NSIS installer + portable .exe (cross-builds from macOS, no Wine)
 npm run dist:all   # both
@@ -35,6 +36,8 @@ Main process, roughly outermost to innermost:
 | `creds.js` | credential state, redaction, expiry, `online` computation, subprocess `env()` |
 | `aws.js` | AWS CLI wrapper, error classification (`err.kind`) and message mapping |
 | `awsConfig.js` | parses `~/.aws/config` + `credentials` into a profile list (non-secret fields only) |
+| `assume.js` | holds an assumed role and refreshes it before expiry; shared by `ipc.js` and `health.js` |
+| `roleArn.js` | IAM role ARN validation — no dependencies, so `settings.js` can re-validate from disk |
 | `tunnels.js` | tunnel records and lifecycle: start, reconnect, retry, sweep, port claims |
 | `ports.js` | free-port allocation, in-use checks, who-holds-this-port conflict reports |
 | `procs.js` | process discovery and termination (`pgrep`/CIM, SIGTERM→SIGKILL, `taskkill /T`) |
@@ -90,6 +93,40 @@ or `'unknown'`. Never invent a countdown for the `unknown` case — showing a wr
 credentials is worse than showing none. In profile mode it *is* discoverable, via
 `aws.credentialExpiration()` (`aws configure export-credentials`); read only the `Expiration`
 from that output and discard the keys.
+
+**An assumed role is a third credential layer, and only the ARN may touch disk.**
+`creds.js` keeps `creds` (base) *and* `assumed`; `env()` hands subprocesses the assumed set
+when there is one, and `baseEnv()` exists for the single call that must not use it —
+`sts:assume-role` cannot run as the role it is acquiring, and re-assuming on expiry only
+works from base credentials that have not expired with it. The derived keys are as live as a
+paste and are memory-only; `settings.js` persists the **role ARN** keyed by the *base*
+account, so changing credentials cannot offer roles from an account you have left. Three
+consequences: `env()` must not set `AWS_PROFILE` while assumed or botocore resolves the base
+profile again and the assume was pointless; `expiresInSeconds()` and `expirySource` must read
+the assumed set, since it is what every call uses and it dies first; and `markExpired()`
+records the rejection on whichever set AWS actually rejected, or reverting inherits an
+expiry that was never claimed about the base.
+
+**Which roles you may assume is not discoverable, and the UI must not pretend otherwise.**
+AWS has no API listing assumable roles — Identity Center's `sso:ListAccountRoles` is the only
+authoritative source and needs SSO, which this setup does not use. So `roleArn.js` validates
+*shape only* (and names the `sts` assumed-role ARN mix-up specifically, because it is the
+paste people actually make), and eligibility is learned solely from `sts:assume-role` failing.
+That is why `explain()` maps `not authorized to perform: sts:AssumeRole` to a sentence about
+trust policies: that error is the feature, not an edge case.
+
+**A role refresh is the one thing `health.js` fixes rather than reports.** Everything else in
+that module re-verifies state and tells the truth about it; `renewAssumedRole()` acts, because
+a lapsed role kills every tunnel running on it. It runs before the credential check so a
+refreshed role is never first reported expired, and skips roles that required MFA — no
+unattended call can supply a fresh code, so retrying would hammer a wall. `RENEW_BEFORE_S`
+(5 min) must stay comfortably above `CRED_INTERVAL_MS`, or one slow check lets the role lapse.
+
+**Assuming a role deliberately changes the principal.** `reviewCredentials()` therefore marks
+existing tunnels stale exactly as any other identity change does — which is correct, since the
+new role may not reach the same instances — and takes a `context.deliberate` of `'assume'` or
+`'revert'` that changes *only the wording* of the prompt. A dialog reading as though something
+unexpected happened is wrong when the user just asked for it.
 
 **`settings.js` is for preferences only, never credentials.** It persists to the Electron
 `userData` directory and re-validates whatever it reads back off disk.
@@ -154,8 +191,10 @@ are separate address spaces: a process on `[::1]:5985` does not block a bind to
 `127.0.0.1:5985`, so probing only IPv4 let a tunnel start alongside a foreign IPv6 listener —
 and since macOS and Windows resolve `localhost` to `::1` first, clients silently reached the
 wrong process. `ports.inUse()` probes both loopbacks (which also catches wildcard `0.0.0.0`/`::`
-binds), `ports.listeners()` returns **all** holders with their families (the old first-match
-`holder()` hid the IPv6 one behind our own IPv4 one), `findFreePort()` verifies both stacks, and
+binds), `ports.listeners()` returns **all** holders with their families (the first-match
+`ports.holder()` hid the IPv6 one behind our own IPv4 one; it is still exported but has no
+callers left — the `holder` that `health.js`, `main.js` and the renderer use is the
+*foreign-listener-first field* on `conflict()`), `findFreePort()` verifies both stacks, and
 `conflict().ours` is true only when *every* listener is ours — one foreign listener alongside our
 own still needs the user's say-so. `clearPort()` and `sweep()` must terminate all holders, since
 the port is only free once both stacks are.
@@ -349,6 +388,10 @@ them at a shell script:
 ```js
 creds.has = () => true; creds.env = () => process.env;
 creds.summary = () => ({ expired: false });
+// Required since launch() stamps meta.principal: a harness that omits this gets null
+// principals, and samePrincipal(null, …) === null silently disables the whole
+// renewal-vs-switch path rather than failing loudly.
+creds.principal = () => ({ account: '1', who: 'assumed-role/R', region: 'eu-west-1' });
 binaries.hasSessionManagerPlugin = () => true;
 binaries.awsOrThrow = () => '/path/to/fake-aws.sh';
 ```
