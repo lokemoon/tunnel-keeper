@@ -30,8 +30,10 @@ message naming which one and how to install it, not a cryptic failure.
 
 There is no Apple Developer ID or Windows code-signing certificate wired in, so:
 
-- **macOS** — Gatekeeper blocks first launch. Right-click the app → **Open** → **Open**,
-  or `xattr -dr com.apple.quarantine "/Applications/Tunnel Keeper.app"`.
+- **macOS** — Gatekeeper blocks first launch. Right-click the app → **Open** → **Open**
+  (or System Settings → Privacy & Security → **Open Anyway**), or
+  `xattr -cr "/Applications/Tunnel Keeper.app"`. If 0.2.0 said the app is "damaged", that
+  was the missing ad-hoc signature, fixed in 0.2.1; the `xattr` command also clears it.
 - **Windows** — SmartScreen shows "unrecognised app". Click **More info** → **Run anyway**.
 
 To sign properly, set `bundle.macOS.signingIdentity` (plus the `APPLE_*` notarisation env vars)

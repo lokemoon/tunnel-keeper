@@ -378,8 +378,10 @@ Clean up any stray listeners/processes a harness leaves behind (`lsof -nP -iTCP:
 the next run inherits them and reports nonsense. The single-instance plugin makes a second
 launch just focus the first — quit the installed app before `tauri dev`.
 
-The builds are unsigned (`bundle.macOS.signingIdentity: null`), so first launch is blocked by
-Gatekeeper and SmartScreen. See README for the bypass.
+The builds have no developer certificate. macOS is ad-hoc signed (`bundle.macOS.signingIdentity:
+"-"`), which is load-bearing: with `null` Tauri leaves the bundle unsigned and a downloaded copy
+is reported as **"damaged"** with no way past it, rather than "unidentified developer". See README
+for the first-launch bypass on both platforms.
 
 ## Credential handling when debugging
 
