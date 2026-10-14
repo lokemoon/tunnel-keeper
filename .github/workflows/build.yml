@@ -35,16 +35,42 @@ jobs:
       - run: npm run ${{ matrix.script }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      # One artifact per chip, matching the per-chip installers.
+      # One artifact per installer file, so each can be downloaded on its own.
       - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'macos'
         with:
-          name: tunnel-keeper-${{ matrix.platform }}-arm64
-          path: dist/*-arm64*.${{ matrix.ext }}
+          name: tunnel-keeper-macos-arm64
+          path: dist/*-macOS-arm64.dmg
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'macos'
         with:
-          name: tunnel-keeper-${{ matrix.platform }}-x64
-          path: dist/*-x64*.${{ matrix.ext }}
+          name: tunnel-keeper-macos-x64
+          path: dist/*-macOS-x64.dmg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'windows'
+        with:
+          name: tunnel-keeper-windows-x64-setup
+          path: dist/*-Windows-x64-Setup.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'windows'
+        with:
+          name: tunnel-keeper-windows-x64-portable
+          path: dist/*-Windows-x64-Portable.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'windows'
+        with:
+          name: tunnel-keeper-windows-arm64-setup
+          path: dist/*-Windows-arm64-Setup.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'windows'
+        with:
+          name: tunnel-keeper-windows-arm64-portable
+          path: dist/*-Windows-arm64-Portable.exe
           if-no-files-found: error
 
   release:
