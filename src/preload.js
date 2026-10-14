@@ -18,13 +18,12 @@ async function call(channel, ...args) {
 
 contextBridge.exposeInMainWorld('hub', {
   getState: () => call('state'),
+  appInfo: () => call('app:info'),
+  showAbout: () => call('app:about'),
   loadCreds: (text) => call('creds:load', text),
   listProfiles: () => call('profiles:list'),
   useProfile: (name) => call('creds:profile', name),
   clearCreds: () => call('creds:clear'),
-  assumeRole: (opts) => call('creds:assume', opts),
-  revertRole: () => call('creds:revert'),
-  recentRoles: () => call('creds:roles'),
   setRegion: (r) => call('creds:region', r),
   listInstances: () => call('instances:list'),
   freePort: () => call('port:free'),

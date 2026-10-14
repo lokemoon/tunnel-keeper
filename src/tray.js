@@ -106,6 +106,7 @@ function buildMenu(creds, list, actions) {
 
   items.push({ type: 'separator' });
   items.push({ label: 'Open Tunnel Keeper', click: actions.show });
+  items.push({ label: 'About Tunnel Keeper', click: actions.about });
   items.push({ label: 'Quit', click: () => app.quit() });
 
   return Menu.buildFromTemplate(items);

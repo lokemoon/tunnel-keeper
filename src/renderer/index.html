@@ -8,8 +8,11 @@
   </head>
   <body>
     <header>
-      <h1>Tunnel Keeper</h1>
-      <div id="identity" class="identity"></div>
+      <h1>Tunnel Keeper <span id="appVersion" class="version"></span></h1>
+      <div class="header-right">
+        <div id="identity" class="identity"></div>
+        <button id="aboutBtn" class="small ghost" title="Version and environment details">About</button>
+      </div>
     </header>
 
     <main>
@@ -20,20 +23,23 @@
           <span id="credsBadge" class="badge badge-idle">Not loaded</span>
         </div>
 
-        <div id="credsForm">
-          <!-- Profile route first: one click when ~/.aws already has what you need. -->
-          <div id="profileBlock" class="subsection">
-            <div class="subsection-head">
-              <span>Use a profile from <code>~/.aws</code></span>
-              <button id="profileRefresh" class="small ghost" title="Re-read ~/.aws">Refresh</button>
-            </div>
-            <div class="row tight">
-              <select id="profile"><option value="">Loading…</option></select>
-              <button id="profileBtn" class="primary" disabled>Use profile</button>
-            </div>
-            <span id="profileNote" class="hint"></span>
+        <!-- Outside credsForm so a profile can be switched without clearing (which stops tunnels). -->
+        <!-- Profile route first: one click when ~/.aws already has what you need. -->
+        <div id="profileBlock" class="subsection">
+          <div class="subsection-head">
+            <span>Use a profile from <code>~/.aws</code></span>
+            <button id="profileRefresh" class="small ghost" title="Re-read ~/.aws">Refresh</button>
           </div>
+          <div class="row tight">
+            <select id="profile"><option value="">Loading…</option></select>
+            <button id="profileBtn" class="primary" disabled>Use profile</button>
+          </div>
+          <span id="profileNote" class="hint"></span>
+          <div id="profileStatus" class="status hidden"></div>
+        </div>
 
+
+        <div id="credsForm">
           <div class="or"><span>or paste credentials</span></div>
 
           <p class="hint">
@@ -61,24 +67,6 @@
             <div><dt>Expires</dt><dd id="fExpiry" class="mono"></dd></div>
             <div><dt>ARN</dt><dd id="fArn" class="mono wrap"></dd></div>
           </dl>
-          <div id="assumeBlock" class="subsection">
-            <div class="row">
-              <label for="roleArn">Assume role</label>
-              <input id="roleArn" list="roleRecent" spellcheck="false"
-                     placeholder="arn:aws:iam::123456789012:role/RoleName" />
-              <datalist id="roleRecent"></datalist>
-              <button id="assumeBtn" class="primary">Assume</button>
-              <button id="revertBtn" class="hidden">Back to base</button>
-            </div>
-            <div id="mfaRow" class="row hidden">
-              <label for="mfaSerial">MFA</label>
-              <input id="mfaSerial" spellcheck="false" placeholder="arn:aws:iam::…:mfa/device" />
-              <input id="mfaCode" spellcheck="false" inputmode="numeric" maxlength="6"
-                     class="mfa-code" placeholder="123456" />
-            </div>
-            <span id="assumeNote" class="hint"></span>
-            <div id="assumeStatus" class="status hidden"></div>
-          </div>
           <div class="row">
             <button id="clearBtn">Clear credentials</button>
             <span class="hint">Clearing also stops every active tunnel.</span>
@@ -111,6 +99,17 @@
               <option value="1433">MSSQL — 1433</option>
               <option value="3389">RDP — 3389</option>
               <option value="22">SSH — 22</option>
+              <option value="443">HTTPS — 443</option>
+              <option value="80">HTTP — 80</option>
+              <option value="8080">HTTP alt — 8080</option>
+              <option value="5432">PostgreSQL — 5432</option>
+              <option value="3306">MySQL / MariaDB — 3306</option>
+              <option value="1521">Oracle — 1521</option>
+              <option value="6379">Redis — 6379</option>
+              <option value="27017">MongoDB — 27017</option>
+              <option value="9200">OpenSearch — 9200</option>
+              <option value="5985">WinRM — 5985</option>
+              <option value="5986">WinRM HTTPS — 5986</option>
               <option value="custom">Custom…</option>
             </select>
           </div>
@@ -126,8 +125,20 @@
         </div>
 
         <div class="field">
-          <label for="remoteHost">Remote host <span class="hint">optional — forward through the instance to this host, e.g. a private EKS endpoint</span></label>
-          <input id="remoteHost" type="text" spellcheck="false" autocomplete="off" placeholder="blank = the instance itself" />
+          <label class="toggle">
+            <input id="useRemoteHost" type="checkbox" disabled />
+            <span>Forward to a remote host <span id="remoteHostHint" class="hint"></span></span>
+          </label>
+          <input id="remoteHost" class="hidden" type="text" spellcheck="false" autocomplete="off"
+                 placeholder="e.g. ABC123.gr7.ap-southeast-2.eks.amazonaws.com" />
+        </div>
+
+        <div class="field">
+          <label class="toggle">
+            <input id="useSessionProfile" type="checkbox" />
+            <span>Use a different profile <span id="sessionProfileHint" class="hint"></span></span>
+          </label>
+          <select id="sessionProfile" class="hidden"></select>
         </div>
 
         <div class="row">

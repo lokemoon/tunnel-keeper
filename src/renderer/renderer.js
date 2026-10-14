@@ -99,6 +99,7 @@ async function loadProfiles() {
     sel.appendChild(new Option(`${p.name} — ${bits}`, p.name));
   }
   sel.disabled = false;
+  fillSessionProfiles();
 
   // Reselect whatever was used last, so the common case is one click.
   const last = res.data.lastUsed;
@@ -112,6 +113,7 @@ function describeProfile() {
   const note = $('profileNote');
   // Don't offer a button that is certain to fail.
   $('profileBtn').disabled = !p || !p.usable;
+  syncProfileButton();
   if (!p) {
     note.textContent = '';
     return;
@@ -130,7 +132,19 @@ function describeProfile() {
         : '';
 }
 
-$('profile').addEventListener('change', describeProfile);
+// The picker stays visible once loaded, so it doubles as the way to switch profile.
+let activeProfile = null;
+function syncProfileButton() {
+  const btn = $('profileBtn');
+  if (btn.textContent === 'Checking…') return;
+  btn.textContent = activeProfile ? 'Switch profile' : 'Use profile';
+  if (activeProfile && $('profile').value === activeProfile) btn.disabled = true;
+}
+
+$('profile').addEventListener('change', () => {
+  status('profileStatus', null);
+  describeProfile();
+});
 $('profileRefresh').addEventListener('click', loadProfiles);
 
 $('profileBtn').addEventListener('click', async () => {
@@ -139,19 +153,19 @@ $('profileBtn').addEventListener('click', async () => {
 
   $('profileBtn').disabled = true;
   $('profileBtn').textContent = 'Checking…';
-  status('credsStatus', 'busy', `Verifying profile "${name}" with AWS…`);
+  status('profileStatus', 'busy', `Verifying profile "${name}" with AWS…`);
 
   const res = await api.useProfile(name);
 
   $('profileBtn').disabled = false;
-  $('profileBtn').textContent = 'Use profile';
+  syncProfileButton();
 
   if (!res.ok) {
-    status('credsStatus', 'err', res.error);
+    status('profileStatus', 'err', res.error);
     return;
   }
   const c = res.data;
-  status('credsStatus', 'ok', `Using profile "${name}" — ${c.username} in account ${c.account}.`);
+  status('profileStatus', 'ok', `Using profile "${name}" — ${c.username} in account ${c.account}.`);
   refreshInstances();
 });
 
@@ -260,6 +274,12 @@ function credState(c) {
 
 function renderCreds(c) {
   const badge = $('credsBadge');
+  const nextActive = c.loaded && c.mode === 'profile' ? c.profile : null;
+  if (nextActive !== activeProfile) {
+    activeProfile = nextActive;
+    describeProfile();
+    fillSessionProfiles();
+  }
   if (!c.loaded) {
     $('credsForm').classList.remove('hidden');
     $('credsLoaded').classList.add('hidden');
@@ -310,92 +330,8 @@ function renderCreds(c) {
     : '';
   $('fArn').textContent = c.arn || '—';
 
-  renderAssume(c);
-
-  // While a role is held it is the identity every tunnel runs as, so it is what the
-  // header should name — the base user is no longer who AWS sees.
-  $('identity').textContent = c.assumed
-    ? `${c.assumed.roleName} @ ${c.account || '—'} · ${c.region}`
-    : `${c.username || '—'} @ ${c.account || '—'} · ${c.region}`;
+  $('identity').textContent = `${c.username || '—'} @ ${c.account || '—'} · ${c.region}`;
   $('startBtn').disabled = c.expired || !$('instance').value;
-}
-
-// The assume-role row. Deliberately inert about eligibility: the field validates the
-// ARN's shape only, because no AWS call can say in advance which roles you may assume.
-function renderAssume(c) {
-  const holding = !!c.assumed;
-  $('revertBtn').classList.toggle('hidden', !holding);
-  $('assumeBtn').textContent = holding ? 'Switch role' : 'Assume';
-
-  const note = $('assumeNote');
-  if (holding) {
-    note.textContent = `Acting as ${c.assumed.roleName} (session ${c.assumed.sessionName}). ` +
-      'Renewed automatically before it expires.';
-    note.className = 'hint ok-text';
-  } else {
-    note.textContent = 'Optional. The role must trust this identity — that is only confirmed by assuming it.';
-    note.className = 'hint';
-  }
-
-  if (!roleFieldTouched && holding) $('roleArn').value = c.assumed.roleArn;
-}
-
-// Set once the user edits the field, so a 1s broadcast repaint cannot overwrite what
-// they are halfway through typing.
-let roleFieldTouched = false;
-
-async function loadRecentRoles() {
-  const res = await api.recentRoles();
-  if (!res.ok) return;
-  const list = $('roleRecent');
-  list.innerHTML = '';
-  for (const arn of res.data.roles || []) {
-    const opt = document.createElement('option');
-    opt.value = arn;
-    list.appendChild(opt);
-  }
-}
-
-async function doAssume() {
-  const btn = $('assumeBtn');
-  const arn = $('roleArn').value.trim();
-  if (!arn) {
-    status('assumeStatus', 'err', 'Enter the ARN of the role to assume.');
-    return;
-  }
-  btn.disabled = true;
-  status('assumeStatus', 'busy', 'Assuming role…');
-  const res = await api.assumeRole({
-    roleArn: arn,
-    mfaSerial: $('mfaSerial').value.trim() || undefined,
-    tokenCode: $('mfaCode').value.trim() || undefined,
-  });
-  btn.disabled = false;
-  if (!res.ok) {
-    status('assumeStatus', 'err', res.error);
-    // Surface the MFA inputs exactly when AWS says they are needed, rather than
-    // showing two more fields to everyone who will never use them.
-    if (/MFA/i.test(res.error)) $('mfaRow').classList.remove('hidden');
-    return;
-  }
-  $('mfaCode').value = '';
-  roleFieldTouched = false;
-  status('assumeStatus', 'ok', `Now acting as ${res.data.assumed.roleName}.`);
-  loadRecentRoles();
-}
-
-async function doRevert() {
-  const btn = $('revertBtn');
-  btn.disabled = true;
-  status('assumeStatus', 'busy', 'Returning to base credentials…');
-  const res = await api.revertRole();
-  btn.disabled = false;
-  if (!res.ok) {
-    status('assumeStatus', 'err', res.error);
-    return;
-  }
-  roleFieldTouched = false;
-  status('assumeStatus', 'ok', 'Back to your base credentials.');
 }
 
 // ---------- instances ----------
@@ -451,17 +387,64 @@ function renderInstances() {
 
   sel.appendChild(new Option('Select an instance…', ''));
   for (const i of instances) {
-    const bits = [i.id, i.privateIp, i.platform].filter(Boolean).join(' · ');
+    const bits = [i.id, i.privateIp, i.platform, i.jumpHost && 'jump host'].filter(Boolean).join(' · ');
     sel.appendChild(new Option(`${i.name} — ${bits}`, i.id));
   }
   sel.disabled = false;
   if (current && instances.some((i) => i.id === current)) sel.value = current;
   $('startBtn').disabled = !sel.value;
+  syncRemoteHost();
 }
+
+// The remote host option exists only for instances tagged SSMJumpHost=true.
+function selectedInstance() {
+  return instances.find((i) => i.id === $('instance').value);
+}
+
+// Every profile, so any of them can be chosen for this one tunnel. Starts on the
+// loaded profile, so ticking the box changes nothing until a different one is picked.
+function fillSessionProfiles() {
+  const sel = $('sessionProfile');
+  const current = sel.value || activeProfile;
+  sel.innerHTML = '';
+  for (const p of profiles) {
+    const opt = new Option([p.name, p.region, !p.usable && 'no credentials'].filter(Boolean).join(' — '), p.name);
+    opt.disabled = !p.usable;
+    sel.appendChild(opt);
+  }
+  if (profiles.some((p) => p.name === current && p.usable)) sel.value = current;
+  syncSessionProfile();
+}
+
+function syncSessionProfile() {
+  const on = $('useSessionProfile').checked;
+  $('sessionProfile').classList.toggle('hidden', !on);
+  $('sessionProfileHint').textContent = on
+    ? '— this tunnel only'
+    : `— otherwise follows the loaded credentials${activeProfile ? ` (${activeProfile})` : ' (pasted keys)'}`;
+}
+
+// Forwarding past the instance is opt-in per instance via the tag SSMJumpHost=true.
+function syncRemoteHost() {
+  const inst = selectedInstance();
+  const allowed = !!(inst && inst.jumpHost);
+  const box = $('useRemoteHost');
+  box.disabled = !allowed;
+  if (!allowed) box.checked = false;
+  $('remoteHost').classList.toggle('hidden', !box.checked);
+  $('remoteHostHint').textContent = allowed ? '' : '— needs the instance tag SSMJumpHost=true';
+}
+
+$('useRemoteHost').addEventListener('change', () => {
+  syncRemoteHost();
+  if ($('useRemoteHost').checked) $('remoteHost').focus();
+});
+$('useSessionProfile').addEventListener('change', syncSessionProfile);
 
 $('instance').addEventListener('change', () => {
   const inst = instances.find((i) => i.id === $('instance').value);
   $('startBtn').disabled = !inst;
+  syncRemoteHost();
   // Windows hosts almost always mean RDP; Linux means SSH. Nudge, don't force.
   if (inst && !$('localPort').value) {
     const guess = inst.windows ? '3389' : '22';
@@ -535,6 +518,15 @@ async function startTunnel({ allowForeignKill = false } = {}) {
     return;
   }
 
+  if (inst.jumpHost && $('useRemoteHost').checked && !$('remoteHost').value.trim()) {
+    status('startStatus', 'warn', 'Enter the remote host, or untick "Forward to a remote host".');
+    return;
+  }
+  // Picking the profile that is already loaded is the same as not overriding it, and
+  // leaving it unset keeps the tunnel tied to the credentials for renewal and checks.
+  const chosen = $('useSessionProfile').checked ? $('sessionProfile').value : '';
+  const sessionProfile = chosen && chosen !== activeProfile ? chosen : null;
+
   $('startBtn').disabled = true;
   status('startStatus', 'busy', `Opening a tunnel to ${inst.name}…`);
 
@@ -542,7 +534,8 @@ async function startTunnel({ allowForeignKill = false } = {}) {
     instanceId: inst.id,
     instanceName: inst.name,
     remotePort: $('remotePort').value,
-    remoteHost: $('remoteHost').value.trim() || null,
+    remoteHost: (inst.jumpHost && $('useRemoteHost').checked && $('remoteHost').value.trim()) || null,
+    sessionProfile,
     localPort: $('localPort').value.trim() || null,
     allowForeignKill,
   });
@@ -756,7 +749,8 @@ function renderTunnels(list) {
     const sub = document.createElement('div');
     sub.className = 'tunnel-sub';
     sub.textContent = t.remoteHost
-      ? `localhost:${t.localPort} → ${t.remoteHost}:${t.remotePort} via ${t.instanceId}`
+      ? `localhost:${t.localPort} → ${t.remoteHost}:${t.remotePort} via ${t.instanceId}` +
+        (t.sessionProfile ? ` as ${t.sessionProfile}` : '')
       : `localhost:${t.localPort} → ${t.instanceId}:${t.remotePort}`;
     left.append(title, sub);
 
@@ -898,17 +892,12 @@ api.onState((state) => {
   renderTunnels(state.tunnels);
 });
 
-$('assumeBtn').addEventListener('click', doAssume);
-$('revertBtn').addEventListener('click', doRevert);
-$('roleArn').addEventListener('input', () => {
-  roleFieldTouched = true;
-  status('assumeStatus', null);
-});
-$('roleArn').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') doAssume();
-});
-
 loadProfiles();
+
+$('aboutBtn').addEventListener('click', () => api.showAbout());
+api.appInfo().then((res) => {
+  if (res.ok) $('appVersion').textContent = `v${res.data.version}`;
+});
 
 api.getState().then((res) => {
   if (res.ok) {
@@ -916,6 +905,5 @@ api.getState().then((res) => {
     offlineReasonText = res.data.creds.offlineReason || null;
     renderCreds(res.data.creds);
     renderTunnels(res.data.tunnels);
-    if (res.data.creds.loaded) loadRecentRoles();
   }
 });

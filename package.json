@@ -1,7 +1,7 @@
 {
   "name": "tunnel-keeper",
   "productName": "Tunnel Keeper",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Simple desktop utility for AWS SSM port-forwarding tunnels",
   "author": "lokemoon",
   "license": "MIT",
@@ -9,9 +9,9 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac",
-    "dist:win": "electron-builder --win",
-    "dist:all": "electron-builder --mac --win"
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:win": "electron-builder --win --x64 --publish never && electron-builder --win --arm64 --publish never",
+    "dist:all": "npm run dist:mac && npm run dist:win"
   },
   "devDependencies": {
     "electron": "^32.0.0",
@@ -39,7 +39,8 @@
         {
           "target": "dmg",
           "arch": [
-            "universal"
+            "arm64",
+            "x64"
           ]
         }
       ],
@@ -47,30 +48,20 @@
       "identity": null
     },
     "dmg": {
-      "title": "Tunnel Keeper",
-      "artifactName": "${productName}-${version}-macOS.${ext}"
+      "title": "${productName} ${version} ${arch}",
+      "artifactName": "${productName}-${version}-macOS-${arch}.${ext}"
     },
     "win": {
       "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
+        "nsis",
+        "portable"
       ]
     },
     "portable": {
-      "artifactName": "${productName}-${version}-Windows-Portable.${ext}"
+      "artifactName": "${productName}-${version}-Windows-${arch}-Portable.${ext}"
     },
     "nsis": {
-      "artifactName": "${productName}-${version}-Windows-Setup.${ext}",
+      "artifactName": "${productName}-${version}-Windows-${arch}-Setup.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

@@ -6,6 +6,7 @@ const binaries = require('./binaries');
 const ports = require('./ports');
 const procs = require('./procs');
 const owned = require('./owned');
+const awsConfig = require('./awsConfig');
 
 const tunnels = new Map(); // id -> { proc, meta, log[], timer }
 let seq = 0;
@@ -117,6 +118,7 @@ function guardCredentials(t) {
   // A tunnel marked stale belongs to credentials that are no longer loaded. Retrying
   // it under a different account, role or region would open a session to a different
   // place behind the same local port, which is worse than not reconnecting at all.
+  if (t && t.meta.sessionProfile) return; // runs as its own profile, not the loaded identity
   if (t && t.meta.stale && creds.samePrincipal(t.meta.principal, creds.principal()) !== true) {
     throw new Error(staleMessage(t.meta.principal));
   }
@@ -222,7 +224,7 @@ function launch(t) {
   ];
 
   const proc = spawn(binaries.awsOrThrow(), args, {
-    env: creds.env(),
+    env: t.meta.sessionProfile ? profileEnv(t.meta.sessionProfile) : creds.env(),
     stdio: ['ignore', 'pipe', 'pipe'],
     // Its own process group, so stopping the tunnel can take the whole group down
     // and not leave session-manager-plugin orphaned on the port. Windows has no
@@ -256,7 +258,9 @@ function launch(t) {
   t.logMark = t.log.length;
   // Which credentials this session was opened with, so a later load can tell a
   // renewal of the same access from a switch to a different account, role or region.
-  t.meta.principal = creds.principal();
+  // A tunnel on its own profile is not tied to the loaded credentials at all, so it
+  // has no principal to compare: null makes reviewCredentials leave it alone.
+  t.meta.principal = t.meta.sessionProfile ? null : creds.principal();
   t.meta.stale = false;
   t.meta.suspended = false;
 
@@ -403,10 +407,21 @@ function normalizeHost(value) {
   return host;
 }
 
-async function start({ instanceId, instanceName, remotePort, remoteHost, localPort, label, allowForeignKill = false }) {
+// Re-read at every launch, so a profile removed from ~/.aws fails with a clear reason.
+function profileEnv(name) {
+  const p = awsConfig.get(name);
+  if (!p) throw new Error(`Profile "${name}" is not in ~/.aws/config.`);
+  return creds.envForProfile(name, p.region || creds.region());
+}
+
+async function start({
+  instanceId, instanceName, remotePort, remoteHost, sessionProfile, localPort, label, allowForeignKill = false,
+}) {
   guardCredentials();
   if (!instanceId) throw new Error('Pick an instance.');
   const host = normalizeHost(remoteHost);
+  const profile = sessionProfile ? String(sessionProfile) : null;
+  if (profile) profileEnv(profile); // validates before any port is touched
 
   const remote = Number(remotePort);
   if (!Number.isInteger(remote) || remote < 1 || remote > 65535) {
@@ -457,6 +472,7 @@ async function start({ instanceId, instanceName, remotePort, remoteHost, localPo
       label: label || `${host || instanceName || instanceId}:${remote}`,
       remotePort: remote,
       remoteHost: host,
+      sessionProfile: profile,
       localPort: local,
       status: 'starting',
       autoReconnect: false,
@@ -656,7 +672,8 @@ function stopAll() {
 // the same access these exact tunnels can be brought back, and only these.
 function suspendForExpiry() {
   for (const [id, t] of tunnels) {
-    if (!isLive(t.meta)) continue;
+    // Its own profile did not expire with the loaded credentials.
+    if (!isLive(t.meta) || t.meta.sessionProfile) continue;
     const auto = t.meta.autoReconnect;
     stop(id); // clears the retry timer and turns auto-reconnect off
     t.meta.suspended = true;
@@ -674,12 +691,7 @@ function suspendForExpiry() {
 // different account, role or region does not, and reconnecting there would put a
 // different destination behind an unchanged local port — so those are marked and
 // left alone for the user to decide about. Nothing is torn down here.
-//
-// `context.deliberate` says the user caused this on purpose — 'assume' or 'revert' —
-// which does not change what happens to the tunnels, only how it is explained. A
-// prompt that reads as though something unexpected happened is wrong when the user
-// just asked for it.
-async function reviewCredentials(context = {}) {
+async function reviewCredentials() {
   const now = creds.principal();
   const stale = [];
   const resumable = [];
@@ -723,7 +735,7 @@ async function reviewCredentials(context = {}) {
 
   notify();
   if (stale.length) {
-    emit('credentials-changed', { stale, resumed, principal: now, ...context });
+    emit('credentials-changed', { stale, resumed, principal: now });
   }
   return { stale: stale.length, resumed: resumed.length };
 }

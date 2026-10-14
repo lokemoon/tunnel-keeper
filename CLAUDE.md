@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```sh
 npm start          # run in development
 npm run dist       # package for the current platform only
-npm run dist:mac   # macOS universal .dmg (must run on a Mac)
-npm run dist:win   # Windows NSIS installer + portable .exe (cross-builds from macOS, no Wine)
+npm run dist:mac   # macOS .dmg per chip: arm64 and x64 (must run on a Mac)
+npm run dist:win   # Windows NSIS installer + portable .exe per chip: x64 and arm64 (cross-builds from macOS, no Wine)
 npm run dist:all   # both
 ```
 
@@ -36,8 +36,6 @@ Main process, roughly outermost to innermost:
 | `creds.js` | credential state, redaction, expiry, `online` computation, subprocess `env()` |
 | `aws.js` | AWS CLI wrapper, error classification (`err.kind`) and message mapping |
 | `awsConfig.js` | parses `~/.aws/config` + `credentials` into a profile list (non-secret fields only) |
-| `assume.js` | holds an assumed role and refreshes it before expiry; shared by `ipc.js` and `health.js` |
-| `roleArn.js` | IAM role ARN validation — no dependencies, so `settings.js` can re-validate from disk |
 | `tunnels.js` | tunnel records and lifecycle: start, reconnect, retry, sweep, port claims |
 | `ports.js` | free-port allocation, in-use checks, who-holds-this-port conflict reports |
 | `procs.js` | process discovery and termination (`pgrep`/CIM, SIGTERM→SIGKILL, `taskkill /T`) |
@@ -94,39 +92,27 @@ credentials is worse than showing none. In profile mode it *is* discoverable, vi
 `aws.credentialExpiration()` (`aws configure export-credentials`); read only the `Expiration`
 from that output and discard the keys.
 
-**An assumed role is a third credential layer, and only the ARN may touch disk.**
-`creds.js` keeps `creds` (base) *and* `assumed`; `env()` hands subprocesses the assumed set
-when there is one, and `baseEnv()` exists for the single call that must not use it —
-`sts:assume-role` cannot run as the role it is acquiring, and re-assuming on expiry only
-works from base credentials that have not expired with it. The derived keys are as live as a
-paste and are memory-only; `settings.js` persists the **role ARN** keyed by the *base*
-account, so changing credentials cannot offer roles from an account you have left. Three
-consequences: `env()` must not set `AWS_PROFILE` while assumed or botocore resolves the base
-profile again and the assume was pointless; `expiresInSeconds()` and `expirySource` must read
-the assumed set, since it is what every call uses and it dies first; and `markExpired()`
-records the rejection on whichever set AWS actually rejected, or reverting inherits an
-expiry that was never claimed about the base.
+**Roles come from profiles, not from the app.** In-app role assumption was removed in 0.1.1:
+a profile with `role_arn` already makes the CLI assume the role on every call, so the app holds
+only one credential set. Do not reintroduce a second layer. `explain()` still maps
+`sts:AssumeRole` denials and MFA errors, because a role profile surfaces them through the CLI;
+MFA cannot be prompted for here, so the message points at caching the session in a terminal.
 
-**Which roles you may assume is not discoverable, and the UI must not pretend otherwise.**
-AWS has no API listing assumable roles — Identity Center's `sso:ListAccountRoles` is the only
-authoritative source and needs SSO, which this setup does not use. So `roleArn.js` validates
-*shape only* (and names the `sts` assumed-role ARN mix-up specifically, because it is the
-paste people actually make), and eligibility is learned solely from `sts:assume-role` failing.
-That is why `explain()` maps `not authorized to perform: sts:AssumeRole` to a sentence about
-trust policies: that error is the feature, not an edge case.
+**The remote-host option is opt-in per instance via the tag `SSMJumpHost=true`.**
+`aws.listInstances()` sets `jumpHost` from it; the renderer's "Forward to a remote host"
+checkbox is disabled (and cleared) for any other instance, and `remoteHost` is sent only when it
+is ticked. With a host, `launch()` uses
+`AWS-StartPortForwardingSessionToRemoteHost`; `remoteHost` lives on the record so Reconnect
+keeps it. `tunnels.normalizeHost()` validates shape only — reachability from the jump host is
+learned from the session.
 
-**A role refresh is the one thing `health.js` fixes rather than reports.** Everything else in
-that module re-verifies state and tells the truth about it; `renewAssumedRole()` acts, because
-a lapsed role kills every tunnel running on it. It runs before the credential check so a
-refreshed role is never first reported expired, and skips roles that required MFA — no
-unattended call can supply a fresh code, so retrying would hammer a wall. `RENEW_BEFORE_S`
-(5 min) must stay comfortably above `CRED_INTERVAL_MS`, or one slow check lets the role lapse.
-
-**Assuming a role deliberately changes the principal.** `reviewCredentials()` therefore marks
-existing tunnels stale exactly as any other identity change does — which is correct, since the
-new role may not reach the same instances — and takes a `context.deliberate` of `'assume'` or
-`'revert'` that changes *only the wording* of the prompt. A dialog reading as though something
-unexpected happened is wrong when the user just asked for it.
+**A tunnel may run as its own profile (`meta.sessionProfile`).** Ticking "Use a different
+profile" picks any `~/.aws/config` profile for that one tunnel (choosing the loaded profile
+sends nothing). `launch()` spawns it with `creds.envForProfile()`, and because it is not the
+loaded identity it is exempt from everything keyed to that identity: `meta.principal` is null
+(so `reviewCredentials()` leaves it alone), `suspendForExpiry()` skips it, and
+`health.serverSideDead()` skips it — the loaded identity cannot see another profile's
+sessions and would declare every one dead.
 
 **`settings.js` is for preferences only, never credentials.** It persists to the Electron
 `userData` directory and re-validates whatever it reads back off disk.
@@ -344,9 +330,13 @@ scripts or styles, no external fonts, images, or CDN. Build DOM nodes with
 **`renderTunnels()` diffs against a JSON signature** before re-rendering, because the 1s
 broadcast would otherwise collapse any open `<details>` element every tick.
 
-**macOS ships as a single universal DMG.** Building `arm64` and `x64` DMGs together fails
-in `hdiutil detach` — both want the same volume name. This is a deliberate distribution
-choice (one file, works on every Mac) despite the size; per-arch DMGs would be ~half each.
+**Installers are split by OS and chip, and each needs care to stay split.** macOS builds
+arm64 and x64 DMGs in one run, which only works because `dmg.title` includes `${arch}` — two DMGs
+with the same volume name fail in `hdiutil detach`. Windows targets deliberately list *no* arch:
+with several archs in one target, electron-builder also emits a combined both-chip installer
+(~148 MB), and a `--x64` flag does not override archs written in the config. So `dist:win` runs
+once per chip, with `--publish never` inside each command — appending it via `npm run … --` only
+reaches the last command of the `&&` chain.
 
 **`build/afterPack.js` must only touch the Windows/Linux `locales/` directory.** On macOS
 the framework's `Resources` directory holds required files such as `resources.pak`;

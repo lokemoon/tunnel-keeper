@@ -68,6 +68,7 @@ function showWindow() {
 
 const trayActions = {
   show: showWindow,
+  about: () => require('./about').show(),
   stop: (id) => tunnels.stop(id),
   stopAll: () => tunnels.stopAll(),
   remove: (id) => tunnels.remove(id),
@@ -89,23 +90,15 @@ const trayActions = {
 // tunnels were opened with, so none of them can be reconnected to the same place.
 // Asked rather than done: the cards are the user's record of what they had set up,
 // and their local ports may be written into client configs.
-async function confirmResetTunnels({ stale, principal, deliberate, role }) {
+async function confirmResetTunnels({ stale, principal }) {
   const n = stale.length;
   const subject = n === 1 ? 'That tunnel' : 'Those tunnels';
-  // The user asked for this change, so say what they did rather than reporting it as a
-  // surprise. The outcome for the tunnels is identical either way.
-  const headline =
-    deliberate === 'assume'
-      ? `You assumed ${role || 'a different role'}.`
-      : deliberate === 'revert'
-        ? 'You returned to your base credentials.'
-        : `${n === 1 ? 'One tunnel was' : `${n} tunnels were`} opened with different credentials.`;
   const { response } = await dialog.showMessageBox({
     type: 'question',
-    title: deliberate ? 'Identity changed' : 'Different AWS identity',
-    message: headline,
+    title: 'Different AWS identity',
+    message: `${n === 1 ? 'One tunnel was' : `${n} tunnels were`} opened with different credentials.`,
     detail:
-      `${deliberate ? 'You are now' : 'These credentials are for'} ${creds.describePrincipal(principal)}. ` +
+      `These credentials are for ${creds.describePrincipal(principal)}. ` +
       `${subject} ${n === 1 ? 'was' : 'were'} opened as a different identity and cannot reconnect ` +
       'to the same instance, so reconnecting is disabled until dismissed. Clear them now?',
     buttons: [n === 1 ? 'Dismiss it' : 'Dismiss them', 'Keep for now'],

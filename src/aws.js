@@ -60,17 +60,20 @@ function explain(raw, err) {
       ? `Profile "${profile}" is no longer in ~/.aws/config. Pick another profile.`
       : 'That AWS profile could not be found in ~/.aws/config.';
   }
-  // Assume-role failures come first: they are the only way to learn whether you are
-  // eligible for a role, so they must say that rather than read as a generic denial.
+  // A profile with role_arn assumes the role inside the CLI, so its failures still
+  // arrive here and must say what is wrong rather than read as a generic denial.
   if (/not authorized to perform: sts:AssumeRole/i.test(s)) {
     const role = (/on resource:?\s*(\S+)/i.exec(s) || [])[1];
     return (
       `These credentials are not allowed to assume ${role || 'that role'}. ` +
-      "Check the role's trust policy lists this identity, or pick a different role."
+      "Check the role's trust policy lists the profile's source identity, or pick a different profile."
     );
   }
   if (/MultiFactorAuthentication|MFA|serial-number/i.test(s) && /required|invalid|failed/i.test(s)) {
-    return 'That role requires MFA. Enter the current code from your authenticator and try again.';
+    return (
+      "That profile's role requires MFA, which this app cannot prompt for. " +
+      'Run any aws command with the profile in a terminal first to cache the session, then load it again.'
+    );
   }
   if (/DurationSeconds exceeds the MaxSessionDuration/i.test(s)) {
     return "Requested a longer session than the role allows. Lower it, or raise the role's maximum session duration.";
@@ -109,13 +112,10 @@ function onCredentialsExpired(fn) {
   onExpired = fn;
 }
 
-// `env` overrides which credentials the call is made with. It exists for exactly one
-// case — sts:assume-role, which cannot run as the role it is acquiring — so callers
-// pass creds.baseEnv(). Everything else uses whatever is currently in effect.
-function cli(args, { timeout = 30000, env = null } = {}) {
+function cli(args, { timeout = 30000 } = {}) {
   return new Promise((resolve, reject) => {
     const bin = binaries.awsOrThrow();
-    execFile(bin, args, { env: env || creds.env(), timeout, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(bin, args, { env: creds.env(), timeout, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         const raw = (stderr || err.message || '').trim();
         const kind = classify(raw, err);
@@ -154,28 +154,6 @@ async function credentialExpiration() {
   }
 }
 
-// Exchanges the base credentials for a role's. Runs with creds.baseEnv() because an
-// assumed set cannot assume on its own behalf, and because re-assuming on expiry has
-// to work from credentials that have not expired with it.
-//
-// Eligibility is not checkable in advance — AWS has no API listing assumable roles —
-// so an AccessDenied here IS the eligibility answer, and explain() maps it to say so.
-async function assumeRole({ roleArn, sessionName, durationSeconds, mfaSerial, tokenCode }) {
-  const args = [
-    'sts', 'assume-role',
-    '--role-arn', roleArn,
-    '--role-session-name', sessionName,
-  ];
-  if (durationSeconds) args.push('--duration-seconds', String(durationSeconds));
-  // Only sent when the role's trust policy demands it; an unnecessary serial is itself
-  // an error, so these travel together or not at all.
-  if (mfaSerial && tokenCode) args.push('--serial-number', mfaSerial, '--token-code', tokenCode);
-
-  const res = await cliJson(args, { env: creds.baseEnv(), timeout: 20000 });
-  if (!res || !res.Credentials) throw new Error('assume-role returned no credentials.');
-  return res.Credentials;
-}
-
 async function getCallerIdentity() {
   const r = await cliJson(['sts', 'get-caller-identity']);
   const arn = r.Arn || '';
@@ -205,7 +183,11 @@ async function listInstances() {
   for (const res of (ec2 && ec2.Reservations) || []) {
     for (const inst of res.Instances || []) {
       const info = online.get(inst.InstanceId) || {};
-      const nameTag = (inst.Tags || []).find((t) => t.Key === 'Name');
+      const tags = inst.Tags || [];
+      const nameTag = tags.find((t) => t.Key === 'Name');
+      // Opt-in: only instances tagged SSMJumpHost=true offer forwarding on to a remote
+      // host, so the option does not appear for boxes nobody meant as a hop.
+      const jumpTag = tags.find((t) => t.Key === 'SSMJumpHost');
       const platform = (inst.Platform || info.PlatformType || '').toLowerCase();
       rows.push({
         id: inst.InstanceId,
@@ -214,6 +196,7 @@ async function listInstances() {
         type: inst.InstanceType || '',
         windows: platform.includes('windows'),
         platform: info.PlatformName || inst.Platform || 'Linux',
+        jumpHost: !!jumpTag && String(jumpTag.Value).trim().toLowerCase() === 'true',
       });
     }
   }
@@ -223,5 +206,4 @@ async function listInstances() {
 
 module.exports = {
   cli, cliJson, getCallerIdentity, credentialExpiration, listInstances, onCredentialsExpired,
-  assumeRole,
 };

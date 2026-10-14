@@ -2,11 +2,11 @@
 
 const { ipcMain } = require('electron');
 const creds = require('./creds');
-const assume = require('./assume');
 const aws = require('./aws');
 const tunnels = require('./tunnels');
 const settings = require('./settings');
 const awsConfig = require('./awsConfig');
+const about = require('./about');
 
 // Uniform envelope so the renderer has exactly one error path to render.
 const handle = (channel, fn) =>
@@ -25,7 +25,6 @@ function register(broadcast) {
   // redacted summary ever goes back the other way.
   handle('creds:load', async (text) => {
     const parsed = creds.parse(text);
-    assume.forget(); // a role held against the previous credentials means nothing now
     creds.set(parsed);
     // A region in the paste wins; otherwise reuse the last one the user chose, so
     // nobody has to re-pick their region on every launch.
@@ -54,6 +53,9 @@ function register(broadcast) {
     return creds.summary();
   });
 
+  handle('app:info', () => about.basic());
+  handle('app:about', () => about.show());
+
   handle('profiles:list', () => ({
     profiles: awsConfig.list(),
     configPath: awsConfig.configPath(),
@@ -68,14 +70,16 @@ function register(broadcast) {
 
     // Precedence for the region: what the profile itself says, then the one
     // remembered from last session.
-    assume.forget();
+    const previous = creds.snapshot();
     creds.setProfile({ name, region: profile.region || settings.get('region') || null });
 
     try {
       creds.setIdentity(await aws.getCallerIdentity());
       creds.markVerified();
     } catch (err) {
-      creds.clear();
+      // A failed switch keeps what was working; a failed first load leaves nothing.
+      if (previous.creds) creds.restore(previous);
+      else creds.clear();
       throw err;
     }
     // Best-effort, and a real win for SSO profiles: a genuine expiry countdown.
@@ -90,31 +94,9 @@ function register(broadcast) {
 
   handle('creds:clear', () => {
     tunnels.stopAll();
-    assume.forget();
     creds.clear();
     broadcast();
     return creds.summary();
-  });
-
-  // Assume a role with the credentials already loaded. The ARN is format-checked
-  // first, but eligibility is only ever learned from the call itself failing.
-  handle('creds:assume', async (opts) => {
-    const summary = await assume.assume(opts || {});
-    broadcast();
-    return summary;
-  });
-
-  handle('creds:revert', async () => {
-    const summary = await assume.revert();
-    broadcast();
-    return summary;
-  });
-
-  // Role ARNs previously assumed from the account currently loaded. Not secrets.
-  handle('creds:roles', () => {
-    const s = creds.summary();
-    const base = creds.isAssumed() ? (assume.current() || {}).baseAccount : s.account;
-    return { account: base || null, roles: base ? assume.recentFor(base) : [] };
   });
 
   handle('creds:region', (r) => {

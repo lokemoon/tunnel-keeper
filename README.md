@@ -8,9 +8,11 @@ Grab the installer for your platform from `dist/`:
 
 | Platform | File | Notes |
 | --- | --- | --- |
-| macOS | `Tunnel Keeper-<version>-macOS.dmg` | Universal — Apple Silicon and Intel |
-| Windows | `Tunnel Keeper-<version>-Windows-Setup.exe` | Per-user install, choose your own directory |
-| Windows | `Tunnel Keeper-<version>-Windows-Portable.exe` | No install, just run it |
+| macOS | `Tunnel Keeper-<version>-macOS-arm64.dmg` | Apple Silicon (M1 and later) |
+| macOS | `Tunnel Keeper-<version>-macOS-x64.dmg` | Intel Macs |
+| Windows | `Tunnel Keeper-<version>-Windows-x64-Setup.exe` | Per-user install, choose your own directory |
+| Windows | `Tunnel Keeper-<version>-Windows-x64-Portable.exe` | No install, just run it |
+| Windows | `Tunnel Keeper-<version>-Windows-arm64-Setup.exe` / `-Portable.exe` | The same, for Windows on ARM |
 
 ### Prerequisites on the target machine
 
@@ -39,7 +41,7 @@ To sign properly, set `CSC_LINK`/`CSC_KEY_PASSWORD` (macOS) or `WIN_CSC_LINK`/
 ```sh
 npm install
 npm start          # run in development
-npm run dist:mac   # macOS universal .dmg
+npm run dist:mac   # macOS .dmg per chip (arm64, x64)
 npm run dist:win   # Windows .exe installer + portable
 npm run dist:all   # both
 ```
@@ -49,11 +51,11 @@ a Mac.
 
 ### Size
 
-Installers are ~70 MB (Windows) and ~155 MB (macOS universal). Almost all of that is
-Chromium — the app's own code is about 48 KB. `build/afterPack.js` strips the ~55 unused
-Electron locale files and `compression: "maximum"` is enabled, which together cut roughly
-9% off the Windows installer and 39 MB off the installed footprint. Beyond that, meaningful
-reduction would mean not shipping Chromium at all.
+Installers are built per OS and per chip, so each download carries only one copy of
+Chromium: ~89 MB (macOS Apple Silicon), ~93 MB (macOS Intel), ~73 MB (Windows x64), ~76 MB
+(Windows ARM). Almost all of that is Chromium — the app's own code is under 100 KB.
+`build/afterPack.js` strips the ~55 unused Electron locale files and `compression: "maximum"`
+is enabled. Beyond that, meaningful reduction would mean not shipping Chromium at all.
 
 ## Use
 
@@ -112,6 +114,14 @@ consumed; only a redacted key (`****JSON`) is ever displayed again.
 
    Dismiss the card and the port is immediately available again. Auto-allocation skips
    claimed ports too.
+
+   **Forwarding through a jump host.** Tag an instance `SSMJumpHost=true` and it is marked
+   `jump host` in the list, enabling **Forward to a remote host**. Tick it to forward
+   `localhost:<local>` through that instance to `<remote host>:<remote port>` — e.g. a
+   private EKS API endpoint on 443 (the console URL can be pasted as-is). This is
+   `AWS-StartPortForwardingSessionToRemoteHost`. Tick **Use a different profile** to run that
+   one tunnel as another `~/.aws/config` profile (e.g. a role allowed to start sessions on the
+   jump host); otherwise it follows the loaded credentials. The app does not assume roles itself.
 
 3. **Start.** Each tunnel shows `localhost:<port> → <instance>:<remote>`, its live status,
    session output, and a copy-address button. Stop them individually, or quit the app —
