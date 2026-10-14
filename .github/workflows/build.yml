@@ -18,10 +18,12 @@ jobs:
         include:
           - os: macos-latest
             script: dist:mac
-            files: dist/*.dmg
+            platform: macos
+            ext: dmg
           - os: windows-latest
             script: dist:win
-            files: dist/*.exe
+            platform: windows
+            ext: exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -33,10 +35,16 @@ jobs:
       - run: npm run ${{ matrix.script }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # One artifact per chip, matching the per-chip installers.
       - uses: actions/upload-artifact@v4
         with:
-          name: tunnel-keeper-${{ matrix.os }}
-          path: ${{ matrix.files }}
+          name: tunnel-keeper-${{ matrix.platform }}-arm64
+          path: dist/*-arm64*.${{ matrix.ext }}
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tunnel-keeper-${{ matrix.platform }}-x64
+          path: dist/*-x64*.${{ matrix.ext }}
           if-no-files-found: error
 
   release:
