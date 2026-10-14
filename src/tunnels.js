@@ -206,12 +206,19 @@ function launch(t) {
     );
   }
 
-  const { instanceId, remotePort, localPort } = t.meta;
+  const { instanceId, remotePort, localPort, remoteHost } = t.meta;
+  // With a remote host the instance is only a hop (a jump host), and the session
+  // forwards on to host:port from inside the VPC — e.g. a private EKS endpoint.
+  // JSON parameters, since the shorthand syntax would split a value on commas.
+  const params = { portNumber: [String(remotePort)], localPortNumber: [String(localPort)] };
+  if (remoteHost) params.host = [remoteHost];
   const args = [
     'ssm', 'start-session',
     '--target', instanceId,
-    '--document-name', 'AWS-StartPortForwardingSession',
-    '--parameters', `portNumber=${remotePort},localPortNumber=${localPort}`,
+    '--document-name', remoteHost
+      ? 'AWS-StartPortForwardingSessionToRemoteHost'
+      : 'AWS-StartPortForwardingSession',
+    '--parameters', JSON.stringify(params),
   ];
 
   const proc = spawn(binaries.awsOrThrow(), args, {
@@ -380,9 +387,26 @@ function scheduleRetry(t) {
   }, delay);
 }
 
-async function start({ instanceId, instanceName, remotePort, localPort, label, allowForeignKill = false }) {
+// A DNS name, IPv4, or bare IPv6 address. Shape only: whether the jump host can
+// resolve and reach it is learned from the session, as it would be on the CLI.
+const HOST_RE = /^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*\.?$|^[0-9A-Fa-f:.]+$/;
+
+function normalizeHost(value) {
+  let host = String(value || '').trim();
+  if (!host) return null;
+  // People paste the EKS endpoint as shown in the console, scheme and all.
+  host = host.replace(/^[a-z]+:\/\//i, '').replace(/\/.*$/, '');
+  if (/^\[.*\]$/.test(host)) host = host.slice(1, -1);
+  if (!HOST_RE.test(host)) {
+    throw new Error(`Remote host "${String(value).trim()}" is not a hostname or IP address.`);
+  }
+  return host;
+}
+
+async function start({ instanceId, instanceName, remotePort, remoteHost, localPort, label, allowForeignKill = false }) {
   guardCredentials();
   if (!instanceId) throw new Error('Pick an instance.');
+  const host = normalizeHost(remoteHost);
 
   const remote = Number(remotePort);
   if (!Number.isInteger(remote) || remote < 1 || remote > 65535) {
@@ -430,8 +454,9 @@ async function start({ instanceId, instanceName, remotePort, localPort, label, a
       id,
       instanceId,
       instanceName: instanceName || instanceId,
-      label: label || `${instanceName || instanceId}:${remote}`,
+      label: label || `${host || instanceName || instanceId}:${remote}`,
       remotePort: remote,
+      remoteHost: host,
       localPort: local,
       status: 'starting',
       autoReconnect: false,

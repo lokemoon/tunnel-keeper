@@ -542,6 +542,7 @@ async function startTunnel({ allowForeignKill = false } = {}) {
     instanceId: inst.id,
     instanceName: inst.name,
     remotePort: $('remotePort').value,
+    remoteHost: $('remoteHost').value.trim() || null,
     localPort: $('localPort').value.trim() || null,
     allowForeignKill,
   });
@@ -754,7 +755,9 @@ function renderTunnels(list) {
     title.appendChild(document.createTextNode(`${t.instanceName} — ${tunnelLabel(t)}`));
     const sub = document.createElement('div');
     sub.className = 'tunnel-sub';
-    sub.textContent = `localhost:${t.localPort} → ${t.instanceId}:${t.remotePort}`;
+    sub.textContent = t.remoteHost
+      ? `localhost:${t.localPort} → ${t.remoteHost}:${t.remotePort} via ${t.instanceId}`
+      : `localhost:${t.localPort} → ${t.instanceId}:${t.remotePort}`;
     left.append(title, sub);
 
     const actions = document.createElement('div');

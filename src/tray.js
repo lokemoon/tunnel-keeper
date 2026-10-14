@@ -92,7 +92,7 @@ function buildMenu(creds, list, actions) {
       items.push({
         label:
           `${offline ? '⚠' : DOT[t.status] || '·'} ${t.instanceName} — ` +
-          `localhost:${t.localPort} → :${t.remotePort}${offline ? ' (offline)' : ''}`,
+          `localhost:${t.localPort} → ${t.remoteHost || ''}:${t.remotePort}${offline ? ' (offline)' : ''}`,
         submenu,
       });
     }
