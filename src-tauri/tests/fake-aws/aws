@@ -1,0 +1,24 @@
+#!/bin/sh
+# Stand-in for the AWS CLI in tests. FAKE_MODE picks the tunnel behaviour.
+case "$1 $2" in
+  "sts get-caller-identity")
+    echo '{"Account":"111122223333","Arn":"arn:aws:sts::111122223333:assumed-role/Dev/session-'"$$"'","UserId":"AROA:x"}'
+    ;;
+  "ssm describe-instance-information")
+    echo '{"InstanceInformationList":[{"InstanceId":"i-0fake","PingStatus":"Online","PlatformType":"Linux","PlatformName":"Amazon Linux"}]}'
+    ;;
+  "ec2 describe-instances")
+    echo '{"Reservations":[{"Instances":[{"InstanceId":"i-0fake","InstanceType":"t3.micro","PrivateIpAddress":"10.0.0.5","Tags":[{"Key":"Name","Value":"fake-db"},{"Key":"SSMJumpHost","Value":"true"}]}]}]}'
+    ;;
+  "ssm describe-sessions")
+    echo '{"Sessions":[]}'
+    ;;
+  "ssm start-session")
+    for a in "$@"; do case "$a" in *localPortNumber*) PARAMS="$a";; esac; done
+    PORT=$(echo "$PARAMS" | sed -E 's/.*"localPortNumber":\["([0-9]+)"\].*/\1/')
+    echo "Starting session with SessionId: fake-$$"
+    exec python3 "$(dirname "$0")/listen.py" "$PORT" "${FAKE_MODE:-ok}"
+    ;;
+  *)
+    echo "unsupported: $*" >&2; exit 2;;
+esac

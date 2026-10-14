@@ -5,51 +5,58 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```sh
-npm start          # run in development
-npm run dist       # package for the current platform only
-npm run dist:mac   # macOS .dmg per chip: arm64 and x64 (must run on a Mac)
-npm run dist:win   # Windows NSIS installer + portable .exe per chip: x64 and arm64 (cross-builds from macOS, no Wine)
-npm run dist:all   # both
+npm start          # tauri dev — debug build with live reload of src/renderer
+npm test           # cargo test: pure logic + tunnel lifecycle against tests/fake-aws
+npm run dist       # release build for this machine
+npm run dist:mac   # macOS .dmg per chip: arm64 and x64 (run on a Mac)
+npm run dist:win   # Windows NSIS installer per chip: x64 and arm64 (run on Windows)
+npm run icons      # regenerate src-tauri/icons from build/icon-source.png
 ```
 
-There is no test framework, linter, or build step — the source ships as-is into the asar.
-See "Verifying renderer changes" below for how to actually exercise the UI.
+Needs a Rust toolchain (rustup) plus Node for the Tauri CLI. Cross-building Windows from
+macOS is not set up; CI builds each OS on its own runner.
 
 ## What this is
 
-An Electron front-end that shells out to the real **AWS CLI v2** to open SSM
+A Tauri 2 app (Rust core, plain-JS webview) that shells out to the real **AWS CLI v2** to open SSM
 port-forwarding tunnels. It does not use the AWS SDK; every AWS interaction is an
 `execFile`/`spawn` of the `aws` binary. AWS CLI v2 and `session-manager-plugin` must be
 installed on the machine — they are not bundled.
 
 ## Module map
 
-Main process, roughly outermost to innermost:
+Rust core in `src-tauri/src/`, one module per former Electron main-process file, roughly
+outermost to innermost:
 
 | File | Responsibility |
 | --- | --- |
-| `main.js` | window + tray lifetime, 1s broadcast, `powerMonitor`/network watching, confirm dialogs |
-| `ipc.js` | all IPC handlers, each returning `{ok, data\|error}` |
-| `preload.js` | context-isolated bridge; every call resolves, never rejects |
-| `health.js` | the supervisor — re-verifies credentials, inspects tunnels for zombies |
-| `connectivity.js` | online↔offline transition notifications (dependency-injected, testable) |
-| `creds.js` | credential state, redaction, expiry, `online` computation, subprocess `env()` |
-| `aws.js` | AWS CLI wrapper, error classification (`err.kind`) and message mapping |
-| `awsConfig.js` | parses `~/.aws/config` + `credentials` into a profile list (non-secret fields only) |
-| `tunnels.js` | tunnel records and lifecycle: start, reconnect, retry, sweep, port claims |
-| `ports.js` | free-port allocation, in-use checks, who-holds-this-port conflict reports |
-| `procs.js` | process discovery and termination (`pgrep`/CIM, SIGTERM→SIGKILL, `taskkill /T`) |
-| `owned.js` | registry of pids this app spawned — the ownership authority |
-| `binaries.js` | locates `aws`/`session-manager-plugin` outside the GUI `PATH` |
-| `tray.js` / `trayIcon.js` | tray state and menu / PNG icons generated at runtime |
-| `notify.js` | desktop notifications |
-| `settings.js` | persisted preferences (region, last profile) — never credentials |
+| `lib.rs` | window + tray lifetime, 1s broadcast, sleep/network watching, confirm dialogs (was `main.js`) |
+| `ipc.rs` | the single `call(channel, args)` command, each channel returning `{ok, data\|error}` |
+| `health.rs` | the supervisor — re-verifies credentials, inspects tunnels for zombies |
+| `connectivity.rs` | online↔offline transition notifications (dependency-injected, tested) |
+| `creds.rs` | credential state, redaction, expiry, `online` computation, subprocess `env()` |
+| `aws.rs` | AWS CLI wrapper, error classification (`Error.kind`) and message mapping |
+| `aws_config.rs` | parses `~/.aws/config` + `credentials` into a profile list (non-secret fields only) |
+| `tunnels.rs` | tunnel records and lifecycle: start, reconnect, retry, sweep, port claims |
+| `ports.rs` | free-port allocation, in-use checks, who-holds-this-port conflict reports |
+| `procs.rs` | process discovery and termination (`pgrep`/CIM, SIGTERM→SIGKILL, `taskkill /T`) |
+| `owned.rs` | registry of pids this app spawned — the ownership authority |
+| `binaries.rs` | locates `aws`/`session-manager-plugin` outside the GUI `PATH`; `command()` for all spawns |
+| `tray.rs` / `tray_icon.rs` | tray state and menu / RGBA icons generated at runtime |
+| `notify.rs` | desktop notifications |
+| `settings.rs` | persisted preferences (region, last profile) — never credentials |
+| `error.rs` | the one `Error` type: message, `kind`, optional port `conflict` |
+| `tests.rs` | `cargo test` suite |
 
-Renderer is `src/renderer/{index.html,renderer.js,styles.css}` only.
+Renderer is `src/renderer/{index.html,bridge.js,renderer.js,styles.css}` only. `bridge.js`
+recreates the Electron preload's `window.hub` on Tauri IPC, so `renderer.js` is unchanged.
+
+The JS file names used in the sections below map one to one onto these modules
+(`main.js` → `lib.rs`, `tunnels.js` → `tunnels.rs`, and so on).
 
 ## Architecture
 
-Plain Electron with no bundler and no framework. `src/renderer/renderer.js` is a classic
+Tauri 2 with no bundler and no frontend framework; `frontendDist` is `src/renderer` as-is. `src/renderer/renderer.js` is a classic
 script, so no `import`/`export` there.
 
 **Secrets never leave the main process.** `src/creds.js` holds the parsed STS credentials
@@ -63,14 +70,12 @@ second (this also drives the expiry countdown). The renderer is close to statele
 re-renders from whatever it is handed. To surface something new in the UI, add it to the
 broadcast payload rather than having the renderer query for it.
 
-**Every IPC handler returns `{ok, data|error}`.** `src/ipc.js` wraps each one so a thrown
-error becomes `{ok: false, error: message}`. `src/preload.js` additionally guarantees calls
-**resolve rather than reject** even when a handler is missing or main crashes — a rejected
-invoke used to leave the UI stuck on a "working…" message forever. Preserve both
-properties when adding channels.
-
-Handlers live in `src/ipc.js`, separate from window creation, so they can be registered
-against a test window without launching the real app.
+**Every IPC channel returns `{ok, data|error}`.** There is one Tauri command, `call`, and
+`ipc.rs` dispatches on the channel name; it never returns a Tauri-level error, so a failure
+is always `{ok: false, error: message}`. `bridge.js` additionally guarantees calls **resolve
+rather than reject** even when the command is missing or the core fails — a rejected invoke
+used to leave the UI stuck on a "working…" message forever. Preserve both properties when
+adding channels: add a match arm in `ipc.rs` and a method on `hub` in `bridge.js`.
 
 **Credentials arrive by one of two routes and `creds.mode` distinguishes them.** `'paste'`
 holds secrets in memory as described above; `'profile'` holds only a profile name and sets
@@ -117,17 +122,24 @@ sessions and would declare every one dead.
 **`settings.js` is for preferences only, never credentials.** It persists to the Electron
 `userData` directory and re-validates whatever it reads back off disk.
 
-**The tray owns the app's lifetime.** `window-all-closed` deliberately does nothing and the
-window's `close` is intercepted to hide, so tunnels survive closing the window; only
-`before-quit` tears things down. `tray.update()` diffs before rebuilding the menu, because
-rebuilding on the 1s tick closes the menu while the user is in it.
+**The tray owns the app's lifetime.** The window's `CloseRequested` is intercepted to hide,
+so tunnels survive closing the window and no window is ever actually closed. Any
+`RunEvent::ExitRequested` is therefore a deliberate quit (tray Quit, Cmd+Q, logout) and gets
+the teardown: `stop_all()` and `creds::clear()`. `tray::update()` diffs before rebuilding the
+menu, because rebuilding on the 1s tick closes the menu while the user is in it.
+
+**Locking in the core.** Module state lives in `static Mutex`es (std, not tokio). Never hold
+one across an `.await`, and never while calling `notify()`/`emit()` — the broadcast re-enters
+`tunnels::list()` and deadlocks. The `with(id, |t| …)` helper in `tunnels.rs` exists for this.
 
 **State must be verified, not assumed — `health.js` exists because it wasn't.** Two bugs came
 from trusting last-known state: the badge read "Active" for 21 hours because `expired` is
 false whenever expiry is unknown and nothing ever re-checked, and tunnels read "Open" after a
 sleep because death was detected *only* by `proc.on('exit')`. Credentials are re-verified on
-an interval and on resume/unlock/network-restored (`powerMonitor` + `net.isOnline` polling in
-`main.js`); tunnels are inspected for process liveness, a listening port, and continued
+an interval and on resume/network-restored (`watch_system_events()` in `lib.rs`; Tauri has
+no `powerMonitor`, so a resume is detected as a 3s timer tick arriving more than 20s late, and
+the network as any non-loopback interface with a routable address; screen unlock is no longer
+a trigger); tunnels are inspected for process liveness, a listening port, and continued
 ownership of that port.
 
 **Connectivity notifications live in `src/connectivity.js`, deliberately separated from
@@ -137,10 +149,7 @@ notify while `isForeground()` — the UI is the notification, and doubling it is
 avoided — and never notify until the new state has survived `SETTLE_MS`, or a blip fires a
 lost/restored pair. The first observation after credentials load is adopted silently.
 
-Note when testing notifications: `electron.Notification` and `electron.Tray` are non-writable,
-non-configurable exports, so they cannot be patched. `notify.js`'s internal `show` is likewise
-unreachable from outside. The seam that works is wrapping the functions `main.js` actually
-calls on the `notify` module object.
+Desktop notifications in Tauri have no click handler, so a toast cannot raise the window.
 
 **Offline must be reported from evidence, not just from a timer.** Three paths set it:
 `net.isOnline()` going false (polled both directions in `main.js`), a health check failing with
@@ -197,9 +206,16 @@ detail.** The whole value is that a saved client config keeps working, so an occ
 must never be reallocated — it is either cleared or reported.
 
 **`session-manager-plugin`, not the AWS CLI, binds the local port, and it can outlive its
-parent.** Tunnels are therefore spawned `detached` (own process group) and torn down by
-group, with `sweep()` killing the tunnel's recorded pids afterwards. Without this a stopped
-tunnel leaves an orphan holding the port and the next same-port reconnect fails.
+parent.** Tunnels are therefore spawned in their own process group (`process_group(0)`) and
+torn down by group, with `sweep()` killing the tunnel's recorded pids afterwards; on Windows
+`taskkill /T`. Without this a stopped tunnel leaves an orphan holding the port and the next
+same-port reconnect fails.
+
+**Every launch has a generation (`gen`).** Output and exit from an older launch of the same
+record are ignored, and `owned` records the gen per pid, so a sweep that fires after a prompt
+reconnect kills only the old launch's processes. Without it, stop-then-Reconnect within 1.5s had
+the first stop's sweep kill the new session, and a reaped zombie's late exit overwrote
+`reconnecting`. Both regressions are covered in `tests.rs`.
 
 **`tunnels.remove()` must not forget the tunnel's pids.** A leftover process can outlive its
 card, and forgetting its pid makes the app prompt the user about its own orphan. `sweep()`
@@ -308,8 +324,8 @@ Spread across four files and interdependent — changing one in isolation has ca
 
 ## Constraints that have already caused bugs
 
-**Never declare a top-level `const hub` in the renderer.** `contextBridge` installs `hub`
-as a non-configurable global; a colliding lexical declaration throws
+**Never declare a top-level `const hub` in the renderer.** `bridge.js` installs `hub` as a
+non-configurable global, as `contextBridge` did; a colliding lexical declaration throws
 `Identifier 'hub' has already been declared`, which aborts the entire script and silently
 kills every event listener. The bridge is aliased as `api` for this reason.
 
@@ -330,79 +346,40 @@ scripts or styles, no external fonts, images, or CDN. Build DOM nodes with
 **`renderTunnels()` diffs against a JSON signature** before re-rendering, because the 1s
 broadcast would otherwise collapse any open `<details>` element every tick.
 
-**Installers are split by OS and chip, and each needs care to stay split.** macOS builds
-arm64 and x64 DMGs in one run, which only works because `dmg.title` includes `${arch}` — two DMGs
-with the same volume name fail in `hdiutil detach`. Windows targets deliberately list *no* arch:
-with several archs in one target, electron-builder also emits a combined both-chip installer
-(~148 MB), and a `--x64` flag does not override archs written in the config. So `dist:win` runs
-once per chip, with `--publish never` inside each command — appending it via `npm run … --` only
-reaches the last command of the `&&` chain.
-
-**`build/afterPack.js` must only touch the Windows/Linux `locales/` directory.** On macOS
-the framework's `Resources` directory holds required files such as `resources.pak`;
-deleting from there yields an app that still launches but logs
-`Failed to load resources.pak` and loses functionality. macOS locale trimming belongs to
-`build.electronLanguages`. The hook also matches only locale-shaped filenames, so a new
-Chromium resource dropped into `locales/` is left alone.
+**Installers are one build per OS and chip.** `--target` picks the chip; `dist:mac` and
+`dist:win` chain one build per chip. The DMG step styles its window through Finder
+AppleScript, which fails without automation permission; with `CI=true` it skips that.
 
 ## How to verify a change
 
-There is no test framework, so verification means writing a throwaway harness in the
-scratchpad and running it. **A clean main-process log does not mean the app works** —
-renderer exceptions surface only through the `console-message` forwarder in `createWindow()`,
-and a syntax error there silently kills every event listener. Always assert that no console
-errors were captured.
+**`npm test` first.** `src-tauri/src/tests.rs` covers parsing, connectivity, the IPv6 port
+checks, and the tunnel lifecycle end to end against `tests/fake-aws/` — a shell `aws` whose
+`FAKE_MODE` (`ok`, `drop`, `orphan`) picks the behaviour, with `listen.py` binding real ports on
+both loopbacks. Lifecycle steps run as one serial test because the core is process-wide state.
+A "foreign" process in a test must be double-forked: a child of the test lingers as an unreaped
+zombie after being killed and reads as alive.
 
-Pick the cheapest layer that actually exercises the change:
-
-**1. Pure logic — plain `node`.** Anything not needing Electron: `creds.parse`, `awsConfig.list`,
-`connectivity.create` (inject `settleMs: 300` to keep it fast), `ports` helpers.
+**UI and IPC — the real app with `TK_EVAL`.** The webview cannot be driven from outside, so
+debug builds (only) run the script in `TK_EVAL=<file>` inside the window 3s after launch:
 ```sh
-node -e 'const c=require("./src/creds"); c.set(c.parse("...")); console.log(c.summary())'
+PATH="$PWD/src-tauri/tests/fake-aws:$PATH" TK_EVAL=/path/ui.js npx tauri dev
 ```
+Click real elements there and report back with
+`__TAURI__.core.invoke('call', {channel: 'log:renderer', args: [msg]})`, which prints
+`[renderer] …` on stderr. Renderer errors and unhandled rejections reach the same log via
+`bridge.js`; **a clean log with no `[renderer]` error lines is part of passing**, since a
+renderer exception silently kills every listener.
 
-**2. Modules needing `app` — `npx electron script.js`.** `settings` (needs `app.getPath`),
-`trayIcon`/`tray` (need a ready app), `health`.
-
-**3. IPC + renderer — hidden window.** `require` the real `ipc.js`, call
-`ipc.register(broadcast)`, `loadFile` the renderer, then `executeJavaScript` to click real
-elements and read back the DOM. This is the only layer that catches wiring failures.
-
-**4. The real app — `require('./src/main.js')` from a harness**, so `powerMonitor`, the tray,
-and the broadcast loop are all genuinely running.
-
-### Stubbing the AWS CLI
-
-Most tunnel behaviour can be driven without AWS by overriding two boundaries and pointing
-them at a shell script:
-```js
-creds.has = () => true; creds.env = () => process.env;
-creds.summary = () => ({ expired: false });
-// Required since launch() stamps meta.principal: a harness that omits this gets null
-// principals, and samePrincipal(null, …) === null silently disables the whole
-// renewal-vs-switch path rather than failing loudly.
-creds.principal = () => ({ account: '1', who: 'assumed-role/R', region: 'eu-west-1' });
-binaries.hasSessionManagerPlugin = () => true;
-binaries.awsOrThrow = () => '/path/to/fake-aws.sh';
-```
-The stub should print `Starting session with SessionId: …` and `Port <n> opened …` to be
-treated as open. Vary it to reproduce specific states: a child that binds the port and
-ignores SIGTERM reproduces the **orphan**; a process that stays alive without binding
-reproduces the **zombie**; exiting non-zero after a delay reproduces a **drop**.
-
-### Things that cannot be patched
-
-`electron.Notification` and `electron.Tray` are non-writable, non-configurable exports, and
-`notify.js`'s internal `show` is unreachable from outside. Wrap the functions `main.js` calls
-on the `notify` module object instead. Similarly, a harness that `require`s `main.js` will
-silently do nothing if another instance holds the single-instance lock — kill the dev app
-first, and check `app.hasSingleInstanceLock()` when a probe reports suspiciously little.
+**Settings are real.** The app reads and writes the user's actual
+`~/Library/Application Support/Tunnel Keeper/settings.json` (deliberately the Electron
+build's file). A harness that switches profile or region overwrites it — back it up first.
 
 Clean up any stray listeners/processes a harness leaves behind (`lsof -nP -iTCP:<port>`), or
-the next run inherits them and reports nonsense.
+the next run inherits them and reports nonsense. The single-instance plugin makes a second
+launch just focus the first — quit the installed app before `tauri dev`.
 
-The builds are unsigned (`build.mac.identity: null`), so first launch is blocked by
-Gatekeeper and SmartScreen. See README for the bypass and the signing env vars.
+The builds are unsigned (`bundle.macOS.signingIdentity: null`), so first launch is blocked by
+Gatekeeper and SmartScreen. See README for the bypass.
 
 ## Credential handling when debugging
 

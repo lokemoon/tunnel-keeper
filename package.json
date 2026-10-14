@@ -1,73 +1,20 @@
 {
   "name": "tunnel-keeper",
   "productName": "Tunnel Keeper",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Simple desktop utility for AWS SSM port-forwarding tunnels",
   "author": "lokemoon",
   "license": "MIT",
-  "main": "src/main.js",
   "scripts": {
-    "start": "electron .",
-    "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac --publish never",
-    "dist:win": "electron-builder --win --x64 --publish never && electron-builder --win --arm64 --publish never",
-    "dist:all": "npm run dist:mac && npm run dist:win"
+    "start": "tauri dev",
+    "icons": "tauri icon build/icon-source.png -o src-tauri/icons",
+    "dist": "tauri build",
+    "dist:mac": "tauri build --target aarch64-apple-darwin --bundles dmg && tauri build --target x86_64-apple-darwin --bundles dmg",
+    "dist:win": "tauri build --target x86_64-pc-windows-msvc --bundles nsis && tauri build --target aarch64-pc-windows-msvc --bundles nsis",
+    "dist:all": "npm run dist:mac && npm run dist:win",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
-    "electron": "^32.0.0",
-    "electron-builder": "^25.1.8"
-  },
-  "build": {
-    "appId": "com.lokemoon.tunnel-keeper",
-    "productName": "Tunnel Keeper",
-    "directories": {
-      "output": "dist",
-      "buildResources": "build"
-    },
-    "afterPack": "build/afterPack.js",
-    "compression": "maximum",
-    "electronLanguages": [
-      "en-US"
-    ],
-    "files": [
-      "src/**/*",
-      "!**/*.map"
-    ],
-    "mac": {
-      "category": "public.app-category.developer-tools",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ],
-      "darkModeSupport": true,
-      "identity": null
-    },
-    "dmg": {
-      "title": "${productName} ${version} ${arch}",
-      "artifactName": "${productName}-${version}-macOS-${arch}.${ext}"
-    },
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ]
-    },
-    "portable": {
-      "artifactName": "${productName}-${version}-Windows-${arch}-Portable.${ext}"
-    },
-    "nsis": {
-      "artifactName": "${productName}-${version}-Windows-${arch}-Setup.${ext}",
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Tunnel Keeper"
-    }
+    "@tauri-apps/cli": "2.12.2"
   }
 }

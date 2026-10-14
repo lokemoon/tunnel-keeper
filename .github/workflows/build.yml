@@ -16,14 +16,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            script: dist:mac
-            platform: macos
-            ext: dmg
-          - os: windows-latest
-            script: dist:win
-            platform: windows
-            ext: exe
+          - { os: macos-latest, target: aarch64-apple-darwin, bundle: dmg, name: macos-arm64, path: 'src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg' }
+          - { os: macos-latest, target: x86_64-apple-darwin, bundle: dmg, name: macos-x64, path: 'src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg' }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, bundle: nsis, name: windows-x64-setup, path: 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe' }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc, bundle: nsis, name: windows-arm64-setup, path: 'src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe' }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -31,46 +27,22 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
       - run: npm ci
-      - run: npm run ${{ matrix.script }}
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Test
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
       # One artifact per installer file, so each can be downloaded on its own.
       - uses: actions/upload-artifact@v4
-        if: matrix.platform == 'macos'
         with:
-          name: tunnel-keeper-macos-arm64
-          path: dist/*-macOS-arm64.dmg
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        if: matrix.platform == 'macos'
-        with:
-          name: tunnel-keeper-macos-x64
-          path: dist/*-macOS-x64.dmg
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        if: matrix.platform == 'windows'
-        with:
-          name: tunnel-keeper-windows-x64-setup
-          path: dist/*-Windows-x64-Setup.exe
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        if: matrix.platform == 'windows'
-        with:
-          name: tunnel-keeper-windows-x64-portable
-          path: dist/*-Windows-x64-Portable.exe
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        if: matrix.platform == 'windows'
-        with:
-          name: tunnel-keeper-windows-arm64-setup
-          path: dist/*-Windows-arm64-Setup.exe
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        if: matrix.platform == 'windows'
-        with:
-          name: tunnel-keeper-windows-arm64-portable
-          path: dist/*-Windows-arm64-Portable.exe
+          name: tunnel-keeper-${{ matrix.name }}
+          path: ${{ matrix.path }}
           if-no-files-found: error
 
   release:

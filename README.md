@@ -1,18 +1,19 @@
 # Tunnel Keeper
 
-Small Electron utility for opening AWS SSM port-forwarding tunnels without touching the terminal.
+Small Tauri utility for opening AWS SSM port-forwarding tunnels without touching the terminal.
 
 ## Install
 
-Grab the installer for your platform from `dist/`:
+Grab the installer for your platform from the GitHub release (or build it, below):
 
 | Platform | File | Notes |
 | --- | --- | --- |
-| macOS | `Tunnel Keeper-<version>-macOS-arm64.dmg` | Apple Silicon (M1 and later) |
-| macOS | `Tunnel Keeper-<version>-macOS-x64.dmg` | Intel Macs |
-| Windows | `Tunnel Keeper-<version>-Windows-x64-Setup.exe` | Per-user install, choose your own directory |
-| Windows | `Tunnel Keeper-<version>-Windows-x64-Portable.exe` | No install, just run it |
-| Windows | `Tunnel Keeper-<version>-Windows-arm64-Setup.exe` / `-Portable.exe` | The same, for Windows on ARM |
+| macOS | `Tunnel Keeper_<version>_aarch64.dmg` | Apple Silicon (M1 and later) |
+| macOS | `Tunnel Keeper_<version>_x64.dmg` | Intel Macs |
+| Windows | `Tunnel Keeper_<version>_x64-setup.exe` | Per-user install; fetches WebView2 if missing |
+| Windows | `Tunnel Keeper_<version>_arm64-setup.exe` | The same, for Windows on ARM |
+
+0.2 drops the Windows portable `.exe`: Tauri has no equivalent target.
 
 ### Prerequisites on the target machine
 
@@ -33,29 +34,25 @@ There is no Apple Developer ID or Windows code-signing certificate wired in, so:
   or `xattr -dr com.apple.quarantine "/Applications/Tunnel Keeper.app"`.
 - **Windows** — SmartScreen shows "unrecognised app". Click **More info** → **Run anyway**.
 
-To sign properly, set `CSC_LINK`/`CSC_KEY_PASSWORD` (macOS) or `WIN_CSC_LINK`/
-`WIN_CSC_KEY_PASSWORD` (Windows) and remove `"identity": null` from `build.mac`.
+To sign properly, set `bundle.macOS.signingIdentity` (plus the `APPLE_*` notarisation env vars)
+and `bundle.windows.certificateThumbprint` in `src-tauri/tauri.conf.json`.
 
 ## Build from source
+
+Needs Node and a Rust toolchain ([rustup](https://rustup.rs)).
 
 ```sh
 npm install
 npm start          # run in development
-npm run dist:mac   # macOS .dmg per chip (arm64, x64)
-npm run dist:win   # Windows .exe installer + portable
-npm run dist:all   # both
+npm test           # Rust test suite, against a stand-in AWS CLI
+npm run dist:mac   # macOS .dmg per chip (arm64, x64) — on a Mac
+npm run dist:win   # Windows installer per chip (x64, arm64) — on Windows
 ```
-
-Windows installers build fine on macOS (no Wine needed). macOS `.dmg` builds must run on
-a Mac.
 
 ### Size
 
-Installers are built per OS and per chip, so each download carries only one copy of
-Chromium: ~89 MB (macOS Apple Silicon), ~93 MB (macOS Intel), ~73 MB (Windows x64), ~76 MB
-(Windows ARM). Almost all of that is Chromium — the app's own code is under 100 KB.
-`build/afterPack.js` strips the ~55 unused Electron locale files and `compression: "maximum"`
-is enabled. Beyond that, meaningful reduction would mean not shipping Chromium at all.
+0.2 moved from Electron to Tauri, which uses the system webview instead of bundling
+Chromium: the macOS DMG went from ~89 MB to ~2.3 MB, and the app from ~250 MB on disk to ~5 MB.
 
 ## Use
 

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost" />
     <title>Tunnel Keeper</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -160,6 +160,7 @@
       </section>
     </main>
 
+    <script src="bridge.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

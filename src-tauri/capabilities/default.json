@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The main window may call the app's own `call` command and receive the state broadcast. The notification plugin's injected script checks permission on load, which is allowed so it does not log a rejection; nothing else from the plugins is exposed to the page.",
+  "windows": ["main"],
+  "permissions": ["core:event:default", "notification:allow-is-permission-granted"]
+}
