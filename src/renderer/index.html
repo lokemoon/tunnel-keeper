@@ -129,8 +129,13 @@
             <input id="useRemoteHost" type="checkbox" disabled />
             <span>Forward to a remote host <span id="remoteHostHint" class="hint"></span></span>
           </label>
-          <input id="remoteHost" class="hidden" type="text" spellcheck="false" autocomplete="off"
-                 placeholder="e.g. ABC123.gr7.ap-southeast-2.eks.amazonaws.com" />
+          <div id="remoteHostRow" class="row tight hidden">
+            <input id="remoteHost" type="text" spellcheck="false" autocomplete="off" list="remoteHostHistory"
+                   placeholder="e.g. ABC123.gr7.ap-southeast-2.eks.amazonaws.com" />
+            <button id="clearHosts" class="small ghost hidden" type="button"
+                    title="Forget the remote hosts remembered from earlier tunnels">Clear history</button>
+          </div>
+          <datalist id="remoteHostHistory"></datalist>
         </div>
 
         <div class="field">

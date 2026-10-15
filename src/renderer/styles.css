@@ -144,7 +144,7 @@ button.small { padding: 4px 10px; font-size: 12px; }
 
 .row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .row.tight { margin-top: 8px; }
-.row.tight select { flex: 1; }
+.row.tight select, .row.tight input { flex: 1; min-width: 0; }
 
 .subsection { margin-bottom: 4px; }
 .subsection-head {

@@ -41,7 +41,7 @@ fn app() -> &'static AppHandle {
 }
 
 pub(crate) fn current_state() -> Value {
-    json!({ "creds": creds::summary(), "tunnels": tunnels::list() })
+    json!({ "creds": creds::summary(), "tunnels": tunnels::list(), "remoteHosts": settings::remote_hosts() })
 }
 
 pub(crate) fn broadcast() {

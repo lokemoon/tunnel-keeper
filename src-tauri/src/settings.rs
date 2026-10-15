@@ -12,7 +12,12 @@ use std::sync::Mutex;
 pub struct Settings {
     pub region: Option<String>,
     pub profile: Option<String>,
+    // Remote hosts that have carried a tunnel, most recent first. Hostnames only.
+    #[serde(rename = "remoteHosts", default)]
+    pub remote_hosts: Vec<String>,
 }
+
+const MAX_REMOTE_HOSTS: usize = 15;
 
 static CACHE: Mutex<Option<Settings>> = Mutex::new(None);
 static DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -38,6 +43,20 @@ pub fn load() -> Settings {
     let s = Settings {
         region: parsed.get("region").and_then(|v| v.as_str()).map(String::from),
         profile: parsed.get("profile").and_then(|v| v.as_str()).map(String::from),
+        // Each entry must still pass the same shape check as one typed into the form.
+        remote_hosts: parsed
+            .get("remoteHosts")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str())
+            .filter_map(|h| crate::tunnels::normalize_host(Some(h)).ok().flatten())
+            .fold(Vec::new(), |mut acc, h| {
+                if !acc.contains(&h) && acc.len() < MAX_REMOTE_HOSTS {
+                    acc.push(h);
+                }
+                acc
+            }),
     };
     *cache = Some(s.clone());
     s
@@ -71,4 +90,25 @@ pub fn set_region(v: Option<String>) {
 
 pub fn set_profile(v: Option<String>) {
     save(Settings { profile: v, ..load() });
+}
+
+pub fn remote_hosts() -> Vec<String> {
+    load().remote_hosts
+}
+
+// Called when a tunnel through this host actually opened, so the history only ever
+// offers hosts that worked — never a typo or one the jump host could not reach.
+pub fn remember_remote_host(host: &str) {
+    let mut s = load();
+    let before = s.remote_hosts.clone();
+    s.remote_hosts.retain(|h| !h.eq_ignore_ascii_case(host));
+    s.remote_hosts.insert(0, host.to_string());
+    s.remote_hosts.truncate(MAX_REMOTE_HOSTS);
+    if s.remote_hosts != before {
+        save(s);
+    }
+}
+
+pub fn clear_remote_hosts() {
+    save(Settings { remote_hosts: Vec::new(), ..load() });
 }

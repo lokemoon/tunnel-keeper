@@ -51,6 +51,7 @@
     setAutoReconnect: (id, enabled) => call('tunnel:auto', id, enabled),
     stopTunnel: (id) => call('tunnel:stop', id),
     removeTunnel: (id) => call('tunnel:remove', id),
+    clearRemoteHosts: () => call('hosts:clear'),
     onState: (fn) => {
       if (tauri) tauri.event.listen('state', (e) => fn(e.payload));
     },

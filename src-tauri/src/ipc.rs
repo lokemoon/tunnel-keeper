@@ -136,6 +136,12 @@ async fn dispatch(app: &AppHandle, channel: &str, args: &[Value]) -> Result<Valu
             Ok(json!(next))
         }
 
+        "hosts:clear" => {
+            settings::clear_remote_hosts();
+            crate::broadcast();
+            Ok(json!([]))
+        }
+
         "instances:list" => to_value(aws::list_instances().await?),
         "port:free" => Ok(json!(crate::ports::find_free_port()?)),
 

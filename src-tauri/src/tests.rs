@@ -65,6 +65,23 @@ fn host_normalisation() {
 }
 
 #[test]
+fn remote_host_history_is_most_recent_first_and_capped() {
+    crate::settings::clear_remote_hosts();
+    for h in ["a.example", "b.example", "A.example"] {
+        crate::settings::remember_remote_host(h);
+    }
+    assert_eq!(crate::settings::remote_hosts(), vec!["A.example", "b.example"]);
+    for i in 0..20 {
+        crate::settings::remember_remote_host(&format!("h{i}.example"));
+    }
+    let hosts = crate::settings::remote_hosts();
+    assert_eq!(hosts.len(), 15);
+    assert_eq!(hosts[0], "h19.example");
+    crate::settings::clear_remote_hosts();
+    assert!(crate::settings::remote_hosts().is_empty());
+}
+
+#[test]
 fn regions_are_validated() {
     assert!(creds::valid_region("eu-west-1").is_ok());
     assert!(creds::valid_region("us-gov-west-1").is_ok());

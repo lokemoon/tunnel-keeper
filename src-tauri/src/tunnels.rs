@@ -477,7 +477,7 @@ fn watch(id: String, gen: u64, mut stream: impl tokio::io::AsyncRead + Unpin + S
 fn on_output(id: &str, gen: u64, chunk: &str) {
     let found = with(id, |t| {
         if t.gen != gen {
-            return;
+            return None;
         }
         for line in chunk.split('\n') {
             push(t, line);
@@ -490,8 +490,10 @@ fn on_output(id: &str, gen: u64, chunk: &str) {
             }
         }
         // The plugin prints this once the local listener is actually accepting.
+        let mut opened_via = None;
         if t.meta.status == "starting" && OPENED.is_match(chunk) {
             t.meta.status = "open".into();
+            opened_via = t.meta.remote_host.clone();
             // Only declare recovery once it has actually held, so a flapping session
             // cannot reset the retry budget on every cycle.
             if t.meta.attempts > 0 && t.stable_timer.is_none() {
@@ -514,8 +516,13 @@ fn on_output(id: &str, gen: u64, chunk: &str) {
                 }));
             }
         }
+        Some(opened_via)
     });
-    if found.is_ok() {
+    // Written outside the lock: it touches the disk.
+    if let Ok(Some(Some(host))) = &found {
+        crate::settings::remember_remote_host(host);
+    }
+    if matches!(found, Ok(Some(_))) {
         notify();
     }
 }

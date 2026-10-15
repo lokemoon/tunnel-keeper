@@ -109,7 +109,10 @@ MFA cannot be prompted for here, so the message points at caching the session in
 checkbox is disabled (and cleared) for any other instance, and `remoteHost` is sent only when it
 is ticked. With a host, `launch()` uses
 `AWS-StartPortForwardingSessionToRemoteHost`; `remoteHost` lives on the record so Reconnect
-keeps it. `tunnels.normalizeHost()` validates shape only — reachability from the jump host is
+keeps it. A host is remembered (`settings::remember_remote_host`, most
+recent first, capped at 15) only when its tunnel reaches `open`, so the form's dropdown never
+offers a typo; the list rides on the broadcast as `remoteHosts`, and `hosts:clear` forgets it.
+Entries read back off disk are re-checked with `normalize_host`. `tunnels.normalizeHost()` validates shape only — reachability from the jump host is
 learned from the session.
 
 **A tunnel may run as its own profile (`meta.sessionProfile`).** Ticking "Use a different
@@ -120,7 +123,7 @@ loaded identity it is exempt from everything keyed to that identity: `meta.princ
 `health.serverSideDead()` skips it — the loaded identity cannot see another profile's
 sessions and would declare every one dead.
 
-**`settings.js` is for preferences only, never credentials.** It persists to the Electron
+**`settings.rs` is for preferences only, never credentials** (region, last profile, remote-host history). It persists to the Electron
 `userData` directory and re-validates whatever it reads back off disk.
 
 **The tray owns the app's lifetime.** The window's `CloseRequested` is intercepted to hide,

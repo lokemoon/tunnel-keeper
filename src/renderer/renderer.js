@@ -431,9 +431,33 @@ function syncRemoteHost() {
   const box = $('useRemoteHost');
   box.disabled = !allowed;
   if (!allowed) box.checked = false;
-  $('remoteHost').classList.toggle('hidden', !box.checked);
+  $('remoteHostRow').classList.toggle('hidden', !box.checked);
   $('remoteHostHint').textContent = allowed ? '' : '— needs the instance tag SSMJumpHost=true';
 }
+
+// Hosts that have carried a tunnel before, offered as the field's dropdown. Rebuilt
+// only when the list changes, so the 1s broadcast cannot close it while it is open.
+let hostHistoryKey = null;
+function renderHostHistory(hosts) {
+  const list = Array.isArray(hosts) ? hosts : [];
+  const key = JSON.stringify(list);
+  if (key === hostHistoryKey) return;
+  hostHistoryKey = key;
+  const dl = $('remoteHostHistory');
+  dl.replaceChildren(
+    ...list.map((h) => {
+      const o = document.createElement('option');
+      o.value = h;
+      return o;
+    })
+  );
+  $('clearHosts').classList.toggle('hidden', list.length === 0);
+}
+
+$('clearHosts').addEventListener('click', async () => {
+  const res = await api.clearRemoteHosts();
+  if (res.ok) renderHostHistory(res.data);
+});
 
 $('useRemoteHost').addEventListener('change', () => {
   syncRemoteHost();
@@ -890,6 +914,7 @@ api.onState((state) => {
   offlineReasonText = state.creds.offlineReason || null;
   renderCreds(state.creds);
   renderTunnels(state.tunnels);
+  renderHostHistory(state.remoteHosts);
 });
 
 loadProfiles();
@@ -905,5 +930,6 @@ api.getState().then((res) => {
     offlineReasonText = res.data.creds.offlineReason || null;
     renderCreds(res.data.creds);
     renderTunnels(res.data.tunnels);
+    renderHostHistory(res.data.remoteHosts);
   }
 });

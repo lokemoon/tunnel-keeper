@@ -1,6 +1,6 @@
 [package]
 name = "tunnel-keeper"
-version = "0.2.2"
+version = "0.2.3"
 description = "Simple desktop utility for AWS SSM port-forwarding tunnels"
 authors = ["lokemoon"]
 license = "MIT"
