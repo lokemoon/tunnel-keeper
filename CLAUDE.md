@@ -10,7 +10,7 @@ npm test           # cargo test: pure logic + tunnel lifecycle against tests/fak
 npm run dist       # release build for this machine
 npm run dist:mac   # macOS .dmg per chip: arm64 and x64 (run on a Mac)
 npm run dist:win   # Windows NSIS installer per chip: x64 and arm64 (run on Windows)
-npm run icons      # regenerate src-tauri/icons from build/icon-source.png
+npm run icons      # regenerate src-tauri/icons from build/icon.svg (the source of truth)
 ```
 
 Needs a Rust toolchain (rustup) plus Node for the Tauri CLI. Cross-building Windows from
@@ -45,6 +45,7 @@ outermost to innermost:
 | `tray.rs` / `tray_icon.rs` | tray state and menu / RGBA icons generated at runtime |
 | `notify.rs` | desktop notifications |
 | `settings.rs` | persisted preferences (region, last profile) — never credentials |
+| `sysevents.rs` | native network/sleep/unlock notifications, polling fallback, AWS reachability probe |
 | `error.rs` | the one `Error` type: message, `kind`, optional port `conflict` |
 | `tests.rs` | `cargo test` suite |
 
@@ -136,10 +137,12 @@ one across an `.await`, and never while calling `notify()`/`emit()` — the broa
 from trusting last-known state: the badge read "Active" for 21 hours because `expired` is
 false whenever expiry is unknown and nothing ever re-checked, and tunnels read "Open" after a
 sleep because death was detected *only* by `proc.on('exit')`. Credentials are re-verified on
-an interval and on resume/network-restored (`watch_system_events()` in `lib.rs`; Tauri has
-no `powerMonitor`, so a resume is detected as a 3s timer tick arriving more than 20s late, and
-the network as any non-loopback interface with a routable address; screen unlock is no longer
-a trigger); tunnels are inspected for process liveness, a listening port, and continued
+an interval and on resume/unlock/network change. `sysevents.rs` gets those from the OS
+(macOS: SystemConfiguration for network paths — which is what catches a VPN going up or down
+while Wi-Fi stays connected — IOKit for wake, the `com.apple.screenIsUnlocked` distributed
+notification; Windows: IP Helper change callbacks, `PowerRegisterSuspendResumeNotification`, and
+`WM_WTSSESSION_CHANGE` via a subclass of our own window), keeps the 3s interface poll and the
+late-timer sleep check as a fallback, and debounces bursts into one `health::wake()`); tunnels are inspected for process liveness, a listening port, and continued
 ownership of that port.
 
 **Connectivity notifications live in `src/connectivity.js`, deliberately separated from
@@ -151,10 +154,12 @@ lost/restored pair. The first observation after credentials load is adopted sile
 
 Desktop notifications in Tauri have no click handler, so a toast cannot raise the window.
 
-**Offline must be reported from evidence, not just from a timer.** Three paths set it:
-`net.isOnline()` going false (polled both directions in `main.js`), a health check failing with
-`err.kind === 'unreachable'` (classified in `aws.js`), and the `VERIFY_STALE_S` fallback for
-breaks the OS does not report. Recovery requires a *successful* call — `creds.markVerified()`
+**Offline must be reported from evidence, not just from a timer.** Four paths set it:
+the network going away (`sysevents.rs`), a health check failing with `kind == "unreachable"`
+(classified in `aws.rs`), the reachability probe — two consecutive failed TCP connects to
+`ssm.<region>.amazonaws.com:443`, skipped behind an HTTPS proxy — and the `VERIFY_STALE_S`
+fallback. The probe may only ever report *Offline*: a successful connect never sets Online, it
+only asks for the real check via `health::wake()`. Recovery requires a *successful* call — `creds.markVerified()`
 and any successful `cli()` clear the flag; the interface returning does not. Never let an
 unreachable result set expiry: `denied` and `other` leave reachability untouched, since AWS
 answered.
@@ -318,6 +323,9 @@ Spread across four files and interdependent — changing one in isolation has ca
 | `WAKE_GRACE_MS` | `health.js` | 6 s | pause after resume before checking, or sessions read as falsely dead |
 | `VERIFY_STALE_S` | `creds.js` | 4 min | past this, "Online" is no longer claimed — currently exactly 2× `CRED_INTERVAL_MS`, so two consecutive failed checks flip it; never set it below that or a single slow check reads as offline |
 | `SETTLE_MS` | `connectivity.js` | 4 s | a transition must hold this long before it is announced |
+| `PROBE_EVERY` / `PROBE_RETRY` | `sysevents.rs` | 20 s / 3 s | reachability probe cadence; a first failure is retried quickly |
+| `PROBE_FAILS_FOR_OFFLINE` | `sysevents.rs` | 2 | one failed connect is a blip, two is evidence |
+| `WAKE_DEBOUNCE_MS` | `sysevents.rs` | 3 s | OS events come in bursts; each wake forces a credential check |
 | `STABLE_MS` | `tunnels.js` | 10 s | a reconnect must hold this long to count as recovered |
 | `MAX_ATTEMPTS` / `BACKOFF_MS` | `tunnels.js` | 3 / 2s,5s,10s | bounded auto-reconnect |
 | sweep delay | `tunnels.js` | 1.5 s | teardown escalation; slower leaves a reconnect finding its own port held |

@@ -173,6 +173,7 @@ async fn server_side_dead(open: &[Meta]) -> Vec<String> {
 fn noticed(reason: &str) -> &'static str {
     match reason {
         "resume" => " Noticed when the machine woke up.",
+        "unlock" => " Noticed after unlocking.",
         "network" => " Noticed when the network came back.",
         _ => "",
     }
@@ -203,7 +204,7 @@ async fn check_tunnels(reason: &str) {
     notify();
 }
 
-// Called on resume and network-restored: the moments when everything the app
+// Called on resume, unlock and network change: the moments when everything the app
 // believes may have quietly stopped being true.
 pub fn wake(reason: &'static str) {
     LAST_CRED_CHECK.store(0, Ordering::SeqCst); // force a credential check regardless of the interval

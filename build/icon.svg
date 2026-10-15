@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Tunnel Keeper: a connection carried through a tunnel mouth. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2433"/>
+      <stop offset="1" stop-color="#0d1118"/>
+    </linearGradient>
+    <linearGradient id="arch" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5fe0a5"/>
+      <stop offset="1" stop-color="#2fa874"/>
+    </linearGradient>
+    <radialGradient id="mouth" cx="0.5" cy="0.62" r="0.6">
+      <stop offset="0" stop-color="#05070b"/>
+      <stop offset="1" stop-color="#121826"/>
+    </radialGradient>
+  </defs>
+  <!-- macOS icon grid: 824px tile centred on the 1024 canvas -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+  <!-- tunnel portal; the connection passes behind its pillars -->
+  <path d="M262 742 V500 a250 250 0 0 1 500 0 V742 Z" fill="url(#arch)"/>
+  <path d="M340 742 V508 a172 172 0 0 1 344 0 V742 Z" fill="url(#mouth)"/>
+  <!-- the forwarded connection: in one side, through the dark, out the other -->
+  <path d="M180 640 H240" stroke="#8fb8ff" stroke-width="40" stroke-linecap="round"/>
+  <path d="M392 640 H640" stroke="#8fb8ff" stroke-opacity="0.35" stroke-width="32" stroke-linecap="round" stroke-dasharray="1 62"/>
+  <path d="M786 640 H836" stroke="#8fb8ff" stroke-width="40" stroke-linecap="round"/>
+  <path d="M790 578 L862 640 L790 702" fill="none" stroke="#8fb8ff" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- ground line -->
+  <rect x="200" y="742" width="624" height="34" rx="17" fill="#2fa874" opacity="0.55"/>
+</svg>

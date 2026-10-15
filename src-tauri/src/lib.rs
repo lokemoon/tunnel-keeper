@@ -15,6 +15,7 @@ mod owned;
 mod ports;
 mod procs;
 mod settings;
+mod sysevents;
 mod tray;
 mod tray_icon;
 mod tunnels;
@@ -25,7 +26,7 @@ mod tests;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{async_runtime, AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -257,65 +258,6 @@ fn on_tunnel_event(kind: &str, t: Value) {
     }
 }
 
-// Interface-level connectivity, as Electron's net.isOnline() reported it: any
-// non-loopback interface holding a routable address.
-fn has_network() -> bool {
-    if_addrs::get_if_addrs()
-        .map(|ifs| {
-            ifs.iter().any(|i| {
-                !i.is_loopback()
-                    && match i.ip() {
-                        std::net::IpAddr::V4(a) => !a.is_link_local(),
-                        std::net::IpAddr::V6(a) => (a.segments()[0] & 0xffc0) != 0xfe80,
-                    }
-            })
-        })
-        .unwrap_or(true)
-}
-
-// Sleep and network loss are exactly when the app's picture of the world goes stale
-// without any event telling it so. Tauri has no powerMonitor, so a resume is detected
-// from the wall clock instead: timers do not run while the machine sleeps, so a tick
-// that arrives far later than scheduled means the machine was suspended.
-fn watch_system_events() {
-    const TICK: Duration = Duration::from_secs(3);
-    const SLEPT: Duration = Duration::from_secs(20);
-
-    // Watched in both directions. Losing the network is the fastest possible signal
-    // that nothing is working, so it is reported at once instead of waiting for a
-    // check to time out or for the staleness window to elapse.
-    let mut had_network = has_network();
-    if !had_network {
-        creds::mark_unreachable("This machine has no network connection.");
-    }
-    async_runtime::spawn(async move {
-        let mut last = SystemTime::now();
-        loop {
-            tokio::time::sleep(TICK).await;
-            let now = SystemTime::now();
-            let gap = now.duration_since(last).unwrap_or_default();
-            last = now;
-            if gap > TICK + SLEPT {
-                health::wake("resume");
-            }
-
-            let net = has_network();
-            if net == had_network {
-                continue;
-            }
-            had_network = net;
-            if net {
-                // Do not claim Online again on the strength of the interface alone — a check
-                // has to succeed first. wake() runs one shortly.
-                health::wake("network");
-            } else {
-                creds::mark_unreachable("This machine has no network connection.");
-                broadcast();
-            }
-        }
-    });
-}
-
 fn quit() {
     QUITTING.store(true, Ordering::SeqCst);
     tunnels::stop_all();
@@ -394,7 +336,7 @@ pub fn run() {
             });
 
             health::init(broadcast);
-            watch_system_events();
+            sysevents::start(&handle, broadcast);
 
             // Development only: TK_EVAL=<file> runs a script in the real webview once it
             // has loaded — the way to click through the UI from a harness, since the

@@ -1,13 +1,13 @@
 {
   "name": "tunnel-keeper",
   "productName": "Tunnel Keeper",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Simple desktop utility for AWS SSM port-forwarding tunnels",
   "author": "lokemoon",
   "license": "MIT",
   "scripts": {
     "start": "tauri dev",
-    "icons": "tauri icon build/icon-source.png -o src-tauri/icons",
+    "icons": "tauri icon build/icon.svg -o src-tauri/icons",
     "dist": "tauri build",
     "dist:mac": "tauri build --target aarch64-apple-darwin --bundles dmg && tauri build --target x86_64-apple-darwin --bundles dmg",
     "dist:win": "tauri build --target x86_64-pc-windows-msvc --bundles nsis && tauri build --target aarch64-pc-windows-msvc --bundles nsis",
